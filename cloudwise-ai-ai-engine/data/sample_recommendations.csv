@@ -1,0 +1,5 @@
+resource_id,resource_type,cpu_utilization,total_cost
+aws-vm-001,EC2,15,500
+aws-vm-002,EC2,92,1200
+aws-vm-003,EC2,45,700
+aws-vm-004,EC2,10,350
