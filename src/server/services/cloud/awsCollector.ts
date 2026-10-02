@@ -8,12 +8,84 @@ import {
   DescribeInstancesCommand
 } from "@aws-sdk/client-ec2";
 
+import {
+  CloudWatchClient,
+  GetMetricStatisticsCommand
+} from "@aws-sdk/client-cloudwatch";
+
 
 const AWS_REGION = "ap-south-1";
 
 
-export async function testAwsConnection(): Promise<boolean> {
+export async function getEc2CpuUtilization(
+  instanceId: string
+): Promise<number | null> {
+
+  const cloudWatchClient = new CloudWatchClient({
+    region: AWS_REGION,
+  });
+
+  const endTime = new Date();
+
+  const startTime = new Date(
+    endTime.getTime() - 60 * 60 * 1000
+  );
+
   try {
+
+    const response = await cloudWatchClient.send(
+      new GetMetricStatisticsCommand({
+        Namespace: "AWS/EC2",
+        MetricName: "CPUUtilization",
+
+        Dimensions: [
+          {
+            Name: "InstanceId",
+            Value: instanceId,
+          },
+        ],
+
+        StartTime: startTime,
+        EndTime: endTime,
+
+        Period: 300,
+
+        Statistics: ["Average"],
+
+        Unit: "Percent",
+      })
+    );
+
+    const datapoints = response.Datapoints ?? [];
+
+    if (datapoints.length === 0) {
+      return null;
+    }
+
+    datapoints.sort(
+      (a, b) =>
+        (b.Timestamp?.getTime() ?? 0) -
+        (a.Timestamp?.getTime() ?? 0)
+    );
+
+    return datapoints[0].Average ?? null;
+
+  } catch (error) {
+
+    console.error(
+      `Failed to retrieve CPU metric for ${instanceId}:`,
+      error
+    );
+
+    return null;
+  }
+}
+
+
+export async function testAwsConnection(): Promise<boolean> {
+
+  try {
+
     const stsClient = new STSClient({
       region: AWS_REGION,
     });
@@ -28,6 +100,7 @@ export async function testAwsConnection(): Promise<boolean> {
     return true;
 
   } catch (error) {
+
     console.error(
       "AWS connection failed:",
       error
@@ -56,19 +129,27 @@ export async function getEc2Instances() {
 
       for (const instance of reservation.Instances ?? []) {
 
+        const instanceId =
+          instance.InstanceId ?? "unknown";
+
         const nameTag = instance.Tags?.find(
           tag => tag.Key === "Name"
         );
 
+        const cpuUtilization =
+          instanceId !== "unknown"
+            ? await getEc2CpuUtilization(instanceId)
+            : null;
+
         resources.push({
+
           provider: "AWS",
 
-          resource_id:
-            instance.InstanceId ?? "unknown",
+          resource_id: instanceId,
 
           resource_name:
             nameTag?.Value ??
-            instance.InstanceId ??
+            instanceId ??
             "Unnamed EC2",
 
           resource_type: "EC2",
@@ -85,7 +166,12 @@ export async function getEc2Instances() {
             instance.PrivateIpAddress ?? null,
 
           public_ip:
-            instance.PublicIpAddress ?? null
+            instance.PublicIpAddress ?? null,
+
+          cpu_utilization:
+            cpuUtilization !== null
+              ? Number(cpuUtilization.toFixed(2))
+              : null
         });
       }
     }
