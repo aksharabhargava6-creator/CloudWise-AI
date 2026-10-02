@@ -1,0 +1,8 @@
+{
+  "name": "CloudWise-AI",
+  "description": "Intelligent cloud cost optimization and analytics platform featuring automated anomaly detection, expenditure forecasting, and multi-cloud rightsizing recommendations.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
