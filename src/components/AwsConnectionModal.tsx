@@ -65,6 +65,18 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
 
   if (!isOpen) return null;
 
+  const safeParseJson = async (res: Response) => {
+    const text = await res.text().catch(() => '');
+    if (!text || text.trim().length === 0) {
+      throw new Error(`Server returned empty response (HTTP ${res.status}). The server may have restarted - please retry.`);
+    }
+    try {
+      return JSON.parse(text);
+    } catch (_e) {
+      throw new Error(`Server response error: ${text.substring(0, 150)}`);
+    }
+  };
+
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
@@ -74,7 +86,7 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ region: selectedRegion }),
       });
-      const data = await res.json();
+      const data = await safeParseJson(res);
       setTestResult(data);
     } catch (err: any) {
       setTestResult({
@@ -103,7 +115,7 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
           region: selectedRegion
         }),
       });
-      const data = await res.json();
+      const data = await safeParseJson(res);
       if (res.ok && data.success) {
         setTestResult({
           connected: true,
@@ -116,7 +128,7 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
       } else {
         setTestResult({
           connected: false,
-          error: data.error || data.details || 'AWS Authentication rejected these credentials.'
+          error: data?.error || data?.details || 'AWS Authentication rejected these credentials.'
         });
       }
     } catch (err: any) {

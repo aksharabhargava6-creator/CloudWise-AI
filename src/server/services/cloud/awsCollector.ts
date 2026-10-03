@@ -90,6 +90,8 @@ export async function testAwsConnection(regionOverride?: string): Promise<AwsCon
       errorMsg = 'Invalid AWS Access Key or Secret Key. Please verify that this Access Key ID exists and is Active in your AWS IAM Console, and that the Secret Access Key matches.';
     } else if (errorMsg.includes('SignatureDoesNotMatch')) {
       errorMsg = 'SignatureDoesNotMatch: Your Secret Access Key is incorrect or was mistyped in .env.';
+    } else if (errorMsg.includes('AuthFailure') || errorMsg.includes('validate the provided access credentials')) {
+      errorMsg = 'AuthFailure: AWS was not able to validate your credentials. Please double check that the Secret Access Key matches your Access Key, and that your AWS account is verified.';
     }
 
     return {
