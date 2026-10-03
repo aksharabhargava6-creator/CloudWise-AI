@@ -51,6 +51,11 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
 }) => {
   const [selectedRegion, setSelectedRegion] = useState<string>(cloudStatus.region || 'ap-south-1');
   const [testing, setTesting] = useState<boolean>(false);
+  const [savingCreds, setSavingCreds] = useState<boolean>(false);
+  const [showCredForm, setShowCredForm] = useState<boolean>(false);
+  const [accessKeyInput, setAccessKeyInput] = useState<string>('');
+  const [secretKeyInput, setSecretKeyInput] = useState<string>('');
+  const [sessionTokenInput, setSessionTokenInput] = useState<string>('');
   const [testResult, setTestResult] = useState<{
     connected?: boolean;
     account?: string;
@@ -78,6 +83,49 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
       });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleConfigureCredentials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accessKeyInput.trim() || !secretKeyInput.trim()) return;
+
+    setSavingCreds(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/cloud/aws/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: accessKeyInput.trim(),
+          secretAccessKey: secretKeyInput.trim(),
+          sessionToken: sessionTokenInput.trim() || undefined,
+          region: selectedRegion
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTestResult({
+          connected: true,
+          account: data.account,
+          arn: data.arn
+        });
+        setShowCredForm(false);
+        // Trigger live refresh
+        await onSync(selectedRegion);
+      } else {
+        setTestResult({
+          connected: false,
+          error: data.error || data.details || 'AWS Authentication rejected these credentials.'
+        });
+      }
+    } catch (err: any) {
+      setTestResult({
+        connected: false,
+        error: err?.message || 'Failed to submit AWS credentials.'
+      });
+    } finally {
+      setSavingCreds(false);
     }
   };
 
@@ -173,7 +221,7 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
 
           {/* Diagnostic Test Box */}
           {testResult && (
-            <div className={`p-3.5 rounded-btn border text-xs ${
+            <div className={`p-4 rounded-btn border text-xs space-y-2 ${
               testResult.connected
                 ? 'bg-success/10 border-success/30 text-text'
                 : 'bg-danger/10 border-danger/30 text-text'
@@ -182,12 +230,12 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
                 {testResult.connected ? (
                   <>
                     <CheckCircle2 className="w-4 h-4 text-success" />
-                    <span className="text-success">AWS STS Connection Verified</span>
+                    <span className="text-success text-sm">AWS STS Connection Verified</span>
                   </>
                 ) : (
                   <>
                     <AlertCircle className="w-4 h-4 text-danger" />
-                    <span className="text-danger">AWS Authentication Error</span>
+                    <span className="text-danger text-sm">AWS Authentication Error</span>
                   </>
                 )}
               </div>
@@ -197,10 +245,95 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
                   <p className="truncate"><strong className="text-text">IAM Principal:</strong> {testResult.arn}</p>
                 </div>
               ) : (
-                <p className="mt-1 text-danger/90">{testResult.error}</p>
+                <div className="space-y-2 mt-1">
+                  <p className="text-danger font-medium">{testResult.error}</p>
+                  <div className="p-2.5 rounded bg-surface border border-border text-[11px] text-muted space-y-1">
+                    <p className="font-semibold text-text">How to resolve this:</p>
+                    <p>• If using <strong>Standard AWS</strong>: In AWS IAM Console &gt; Users &gt; Security credentials &gt; Create new Access Key.</p>
+                    <p>• If using <strong>AWS Academy / Learner Lab</strong>: In the Lab classroom, click <strong>AWS Details</strong>, copy the fresh credentials (including Session Token), and click "Enter New Credentials" below.</p>
+                  </div>
+                </div>
               )}
             </div>
           )}
+
+          {/* Collapsible Direct Credentials Input */}
+          <div className="border border-border rounded-btn bg-elevated/30 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowCredForm(!showCredForm)}
+              className="w-full px-4 py-3 text-xs font-semibold text-text flex items-center justify-between hover:bg-elevated/60 transition"
+            >
+              <span className="flex items-center gap-2">
+                <Key className="w-3.5 h-3.5 text-brand-cyan" />
+                {showCredForm ? 'Hide Credentials Form' : 'Enter / Update AWS Credentials Here'}
+              </span>
+              <span className="text-[11px] text-brand-cyan">
+                {showCredForm ? 'Close' : 'Configure Live Keys →'}
+              </span>
+            </button>
+
+            {showCredForm && (
+              <form onSubmit={handleConfigureCredentials} className="p-4 pt-2 border-t border-border space-y-3">
+                <p className="text-[11px] text-muted">
+                  Paste your active credentials below to immediately test & connect without editing files:
+                </p>
+                <div>
+                  <label className="text-[11px] font-semibold text-text block mb-1">
+                    AWS Access Key ID
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="AKIA... or ASIA..."
+                    value={accessKeyInput}
+                    onChange={(e) => setAccessKeyInput(e.target.value)}
+                    className="w-full bg-surface border border-border rounded-btn px-3 py-1.5 text-xs text-text font-mono focus:outline-none focus:border-brand-cyan"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-text block mb-1">
+                    AWS Secret Access Key
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="40-character secret key"
+                    value={secretKeyInput}
+                    onChange={(e) => setSecretKeyInput(e.target.value)}
+                    className="w-full bg-surface border border-border rounded-btn px-3 py-1.5 text-xs text-text font-mono focus:outline-none focus:border-brand-cyan"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-text flex items-center justify-between mb-1">
+                    <span>AWS Session Token</span>
+                    <span className="text-[10px] text-muted font-normal">Optional (AWS Academy / Learner Lab / SSO)</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Only required if key starts with ASIA (paste session token from AWS Details)"
+                    value={sessionTokenInput}
+                    onChange={(e) => setSessionTokenInput(e.target.value)}
+                    className="w-full bg-surface border border-border rounded-btn px-3 py-1.5 text-xs text-text font-mono focus:outline-none focus:border-brand-cyan"
+                  />
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="sm"
+                    disabled={savingCreds || !accessKeyInput || !secretKeyInput}
+                  >
+                    {savingCreds ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : <Zap className="w-3.5 h-3.5 mr-1" />}
+                    Save &amp; Connect Live AWS
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
 
           {/* Quick Setup Reference */}
           <div className="p-3.5 bg-elevated/40 border border-border rounded-btn space-y-2">

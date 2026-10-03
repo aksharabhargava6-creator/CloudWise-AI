@@ -20,16 +20,33 @@ import {
 } from "./cloudNormalizer.js";
 
 
+function cleanEnvVal(val?: string): string | undefined {
+  if (!val) return undefined;
+  const trimmed = val.trim().replace(/^["']|["']$/g, '');
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function getAwsClientConfig(regionOverride?: string) {
-  const region = regionOverride || process.env.AWS_REGION || "ap-south-1";
-  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+  const region = cleanEnvVal(regionOverride) || cleanEnvVal(process.env.AWS_REGION) || "ap-south-1";
+  const accessKeyId = cleanEnvVal(process.env.AWS_ACCESS_KEY_ID);
+  const secretAccessKey = cleanEnvVal(process.env.AWS_SECRET_ACCESS_KEY);
+  let sessionToken = cleanEnvVal(process.env.AWS_SESSION_TOKEN);
+
+  if (accessKeyId && secretAccessKey) {
+    const credentials: { accessKeyId: string; secretAccessKey: string; sessionToken?: string } = {
+      accessKeyId,
+      secretAccessKey
+    };
+
+    // Temporary session keys starting with ASIA require sessionToken
+    // Permanent IAM keys starting with AKIA must NOT include sessionToken
+    if (sessionToken && !accessKeyId.startsWith('AKIA')) {
+      credentials.sessionToken = sessionToken;
+    }
+
     return {
       region,
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        sessionToken: process.env.AWS_SESSION_TOKEN || undefined
-      }
+      credentials
     };
   }
   return { region };
@@ -53,6 +70,7 @@ export interface AwsConnectionResult {
 export async function testAwsConnection(regionOverride?: string): Promise<AwsConnectionResult> {
   const config = getAwsClientConfig(regionOverride);
   try {
+    // Use STS client with credentials
     const stsClient = new STSClient(config);
     const callerId = await stsClient.send(new GetCallerIdentityCommand({}));
     console.log(`[CloudWise-AI] AWS STS connected: Account ${callerId.Account}, ARN: ${callerId.Arn}`);
@@ -65,10 +83,19 @@ export async function testAwsConnection(regionOverride?: string): Promise<AwsCon
     };
   } catch (error: any) {
     console.error("[CloudWise-AI] AWS connection failed:", error);
+
+    // Provide friendly diagnostic guidance for common AWS errors
+    let errorMsg = error?.message || 'Failed to authenticate AWS IAM credentials';
+    if (errorMsg.includes('security token included in the request is invalid') || errorMsg.includes('InvalidClientTokenId')) {
+      errorMsg = 'Invalid AWS Access Key or Secret Key. Please verify that this Access Key ID exists and is Active in your AWS IAM Console, and that the Secret Access Key matches.';
+    } else if (errorMsg.includes('SignatureDoesNotMatch')) {
+      errorMsg = 'SignatureDoesNotMatch: Your Secret Access Key is incorrect or was mistyped in .env.';
+    }
+
     return {
       connected: false,
       region: config.region,
-      error: error?.message || 'Failed to authenticate AWS IAM credentials'
+      error: errorMsg
     };
   }
 }

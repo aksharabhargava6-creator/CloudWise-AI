@@ -143,6 +143,85 @@ app.get('/api/cloud/aws/test', handleAwsTest);
 app.post('/api/cloud/aws/test', handleAwsTest);
 
 /*
+ * POST /api/cloud/aws/configure
+ *
+ * Direct in-UI credential configuration and instant test & sync.
+ */
+app.post('/api/cloud/aws/configure', async (req: Request, res: Response) => {
+  try {
+    const { accessKeyId, secretAccessKey, sessionToken, region } = req.body || {};
+    if (!accessKeyId || !secretAccessKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'Both Access Key ID and Secret Access Key are required.'
+      });
+    }
+
+    const cleanKey = String(accessKeyId).trim().replace(/^["']|["']$/g, '');
+    const cleanSecret = String(secretAccessKey).trim().replace(/^["']|["']$/g, '');
+    const cleanToken = sessionToken ? String(sessionToken).trim().replace(/^["']|["']$/g, '') : undefined;
+    const cleanRegion = (region ? String(region).trim() : null) || process.env.AWS_REGION || 'ap-south-1';
+
+    process.env.AWS_ACCESS_KEY_ID = cleanKey;
+    process.env.AWS_SECRET_ACCESS_KEY = cleanSecret;
+    if (cleanToken && cleanToken.length > 0) {
+      process.env.AWS_SESSION_TOKEN = cleanToken;
+    } else {
+      delete process.env.AWS_SESSION_TOKEN;
+    }
+    process.env.AWS_REGION = cleanRegion;
+
+    // Test connection with the newly applied credentials
+    const testResult = await testAwsConnection(cleanRegion);
+    if (!testResult.connected) {
+      return res.status(401).json({
+        success: false,
+        error: testResult.error,
+        diagnostic: testResult
+      });
+    }
+
+    // Immediately sync live instances
+    const normalizedAws = await getNormalizedAwsResources(cleanRegion);
+    const cloudResources: CloudResource[] = normalizedAws.map(r => ({
+      id: r.id,
+      name: r.name,
+      provider: 'AWS',
+      resource_type: r.resource_type,
+      region: r.region,
+      status: r.status,
+      instance_type: r.instance_type,
+      cpu_utilization: r.cpu_utilization,
+      memory_utilization: r.memory_utilization,
+      storage_utilization: r.storage_utilization,
+      network_in_mb: r.network_in_mb,
+      network_out_mb: r.network_out_mb,
+      cost_usd: r.cost_usd,
+      monthly_cost: r.monthly_cost,
+      anomaly_type: r.anomaly_type,
+      created_at: new Date().toISOString()
+    }));
+
+    cloudService.replaceProviderResources('AWS', cloudResources);
+
+    return res.json({
+      success: true,
+      message: `Successfully connected to AWS Account ${testResult.account} (${cleanRegion})`,
+      account: testResult.account,
+      arn: testResult.arn,
+      region: cleanRegion,
+      count: cloudResources.length,
+      resources: cloudService.getAllResources()
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to configure AWS credentials'
+    });
+  }
+});
+
+/*
  * GET /api/cloud/platforms
  *
  * Retrieves status for all 3 supported platforms (AWS, Azure, GCP)
