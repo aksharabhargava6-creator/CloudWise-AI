@@ -169,3 +169,185 @@ export function normalizeAwsEc2Resource(
     }
   };
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * AZURE VIRTUAL MACHINES NORMALIZATION
+ * ---------------------------------------------------------------------------
+ */
+export interface AzureVmRawResource {
+  provider: "Azure";
+  resource_id: string;
+  resource_name: string;
+  resource_type: string;
+  region: string;
+  status: string; // e.g. "VM running", "VM deallocated", "VM stopped"
+  vm_size: string; // e.g. "Standard_B2s", "Standard_D4s_v5"
+  cpu_utilization?: number | null;
+  private_ip?: string | null;
+  public_ip?: string | null;
+}
+
+const AZURE_VM_HOURLY_RATES: Record<string, number> = {
+  'Standard_B1s': 0.0104,
+  'Standard_B2s': 0.0416,
+  'Standard_B4ms': 0.166,
+  'Standard_D2s_v5': 0.096,
+  'Standard_D4s_v5': 0.192,
+  'Standard_D8s_v5': 0.384,
+  'Standard_E2s_v5': 0.126,
+  'Standard_E4s_v5': 0.252,
+  'Standard_F2s_v2': 0.085,
+  'Standard_F4s_v2': 0.169,
+};
+
+function estimateAzureHourlyCost(vmSize: string): number {
+  if (AZURE_VM_HOURLY_RATES[vmSize]) return AZURE_VM_HOURLY_RATES[vmSize];
+  if (vmSize.includes('B1')) return 0.0104;
+  if (vmSize.includes('B2')) return 0.0416;
+  if (vmSize.includes('D2')) return 0.096;
+  if (vmSize.includes('D4')) return 0.192;
+  if (vmSize.includes('E2')) return 0.126;
+  return 0.08;
+}
+
+export function normalizeAzureVmResource(
+  resource: AzureVmRawResource
+): NormalizedCloudResource {
+  const isRunning = resource.status.toLowerCase().includes('running');
+  const status: NormalizedStatus = isRunning ? 'running' : 'stopped';
+  const hourlyRate = estimateAzureHourlyCost(resource.vm_size);
+
+  const monthlyCost = isRunning
+    ? Math.round((hourlyRate * 720 + 3.20) * 100) / 100
+    : Math.round(7.50 * 100) / 100;
+
+  const cpu = status === 'stopped'
+    ? 0
+    : (resource.cpu_utilization !== null && resource.cpu_utilization !== undefined
+        ? Math.round(resource.cpu_utilization * 100) / 100
+        : 14.2);
+
+  const memory = status === 'running' ? Math.round((cpu * 0.7 + 25) * 10) / 10 : 0;
+  const storage = Math.min(85, Math.max(30, Math.round((38 + (cpu > 60 ? 15 : 0)) * 10) / 10));
+  const networkIn = status === 'running' ? Math.round((cpu * 3.5 + 70) * 10) / 10 : 0;
+  const networkOut = status === 'running' ? Math.round((cpu * 3.0 + 50) * 10) / 10 : 0;
+
+  let anomaly_type: string | undefined = undefined;
+  if (status === 'stopped' && monthlyCost > 0) anomaly_type = 'stopped_with_cost';
+  else if (status === 'running' && cpu < 15) anomaly_type = 'underutilized';
+  else if (status === 'running' && cpu > 80) anomaly_type = 'high_utilization';
+
+  return {
+    id: resource.resource_id,
+    name: resource.resource_name,
+    provider: 'Azure',
+    resource_type: 'Virtual Machine',
+    region: resource.region,
+    status,
+    instance_type: resource.vm_size,
+    cpu_utilization: cpu,
+    memory_utilization: memory,
+    storage_utilization: storage,
+    network_in_mb: networkIn,
+    network_out_mb: networkOut,
+    cost_usd: hourlyRate,
+    monthly_cost: monthlyCost,
+    anomaly_type,
+    metadata: {
+      private_ip: resource.private_ip,
+      public_ip: resource.public_ip,
+      native_resource_type: 'Azure Virtual Machine'
+    }
+  };
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * GCP COMPUTE ENGINE NORMALIZATION
+ * ---------------------------------------------------------------------------
+ */
+export interface GcpComputeRawResource {
+  provider: "GCP";
+  resource_id: string;
+  resource_name: string;
+  resource_type: string;
+  region: string;
+  status: string; // e.g. "RUNNING", "TERMINATED", "STOPPED"
+  machine_type: string; // e.g. "e2-micro", "e2-standard-4"
+  cpu_utilization?: number | null;
+  private_ip?: string | null;
+  public_ip?: string | null;
+}
+
+const GCP_COMPUTE_HOURLY_RATES: Record<string, number> = {
+  'e2-micro': 0.0084,
+  'e2-small': 0.0168,
+  'e2-medium': 0.0336,
+  'e2-standard-2': 0.067,
+  'e2-standard-4': 0.134,
+  'n2-standard-2': 0.097,
+  'n2-standard-4': 0.194,
+  'c2-standard-4': 0.208,
+};
+
+function estimateGcpHourlyCost(machineType: string): number {
+  if (GCP_COMPUTE_HOURLY_RATES[machineType]) return GCP_COMPUTE_HOURLY_RATES[machineType];
+  if (machineType.includes('micro')) return 0.0084;
+  if (machineType.includes('small')) return 0.0168;
+  if (machineType.includes('medium')) return 0.0336;
+  if (machineType.includes('standard-2')) return 0.08;
+  if (machineType.includes('standard-4')) return 0.16;
+  return 0.075;
+}
+
+export function normalizeGcpComputeResource(
+  resource: GcpComputeRawResource
+): NormalizedCloudResource {
+  const isRunning = resource.status.toUpperCase() === 'RUNNING';
+  const status: NormalizedStatus = isRunning ? 'running' : 'stopped';
+  const hourlyRate = estimateGcpHourlyCost(resource.machine_type);
+
+  const monthlyCost = isRunning
+    ? Math.round((hourlyRate * 720 + 2.80) * 100) / 100
+    : Math.round(6.80 * 100) / 100;
+
+  const cpu = status === 'stopped'
+    ? 0
+    : (resource.cpu_utilization !== null && resource.cpu_utilization !== undefined
+        ? Math.round(resource.cpu_utilization * 100) / 100
+        : 11.8);
+
+  const memory = status === 'running' ? Math.round((cpu * 0.72 + 22) * 10) / 10 : 0;
+  const storage = Math.min(80, Math.max(20, Math.round((32 + (cpu > 60 ? 18 : 0)) * 10) / 10));
+  const networkIn = status === 'running' ? Math.round((cpu * 3.8 + 65) * 10) / 10 : 0;
+  const networkOut = status === 'running' ? Math.round((cpu * 3.2 + 45) * 10) / 10 : 0;
+
+  let anomaly_type: string | undefined = undefined;
+  if (status === 'stopped' && monthlyCost > 0) anomaly_type = 'stopped_with_cost';
+  else if (status === 'running' && cpu < 15) anomaly_type = 'underutilized';
+  else if (status === 'running' && cpu > 80) anomaly_type = 'high_utilization';
+
+  return {
+    id: resource.resource_id,
+    name: resource.resource_name,
+    provider: 'GCP',
+    resource_type: 'Compute Engine',
+    region: resource.region,
+    status,
+    instance_type: resource.machine_type,
+    cpu_utilization: cpu,
+    memory_utilization: memory,
+    storage_utilization: storage,
+    network_in_mb: networkIn,
+    network_out_mb: networkOut,
+    cost_usd: hourlyRate,
+    monthly_cost: monthlyCost,
+    anomaly_type,
+    metadata: {
+      private_ip: resource.private_ip,
+      public_ip: resource.public_ip,
+      native_resource_type: 'GCP Compute Engine'
+    }
+  };
+}

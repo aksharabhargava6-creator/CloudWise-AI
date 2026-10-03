@@ -38,6 +38,7 @@ import { RecommendationsTab } from './components/RecommendationsTab.js';
 import { ResourcesTab } from './components/ResourcesTab.js';
 import { ApiConsoleTab } from './components/ApiConsoleTab.js';
 import { AddResourceModal } from './components/AddResourceModal.js';
+import { AwsConnectionModal } from './components/AwsConnectionModal.js';
 import { Button, Skeleton, Card } from './components/ui/Primitives.js';
 
 export function App() {
@@ -50,10 +51,11 @@ export function App() {
   });
 
   // Global State
-  const [activeTab, setActiveTab] = useState<string>('overview');
+  const [activeTab, setActiveTab] = useState<string>('resources');
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState<boolean>(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
+  const [isAwsModalOpen, setIsAwsModalOpen] = useState<boolean>(false);
 
   // Data State
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
@@ -136,52 +138,76 @@ export function App() {
   };
 
   // Trigger Live AWS Sync
-  const triggerAwsSync = async (isManual: boolean = true) => {
+  const triggerAwsSync = async (isManual: boolean = true, targetRegion?: string) => {
     setSyncingAws(true);
     try {
-      const res = await fetch('/api/cloud/aws/sync', { method: 'POST' }).then((r) => r.json());
-      if (res.success) {
-        if (res.resources) {
-          setResources(res.resources);
-        }
-        // Refresh overview metrics with new live resources
-        const updatedOverview = await fetch('/api/ai/overview').then((r) => r.json());
-        setOverview(updatedOverview);
+      const regionToUse = targetRegion || cloudStatus.region || 'ap-south-1';
+      const response = await fetch('/api/cloud/aws/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ region: regionToUse }),
+      });
 
-        // Re-run AI analysis on the updated inventory
-        const analysisRes = await fetch('/ai/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        }).then((r) => r.json());
+      let res: any;
+      try {
+        res = await response.json();
+      } catch (_jsonErr) {
+        const text = await response.text().catch(() => '');
+        throw new Error(text || `Server responded with HTTP ${response.status}`);
+      }
 
-        if (analysisRes) {
-          setAnomalies(analysisRes.anomalies || []);
-          setForecast(analysisRes.forecast || []);
-          setRecommendations(analysisRes.recommendations || []);
-        }
+      if (!response.ok || !res.success) {
+        throw new Error(res?.details || res?.error || `HTTP ${response.status} failed`);
+      }
 
-        setCloudStatus((prev) => ({ ...prev, isLiveActive: true }));
+      if (res.resources) {
+        setResources(res.resources);
+      }
+
+      // Refresh overview metrics with new live resources
+      const updatedOverview = await fetch('/api/ai/overview').then((r) => r.json()).catch(() => null);
+      if (updatedOverview) setOverview(updatedOverview);
+
+      // Re-run AI analysis on the updated inventory
+      const analysisRes = await fetch('/ai/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }).then((r) => r.json()).catch(() => null);
+
+      if (analysisRes) {
+        setAnomalies(analysisRes.anomalies || []);
+        setForecast(analysisRes.forecast || []);
+        setRecommendations(analysisRes.recommendations || []);
+      }
+
+      setCloudStatus((prev) => ({
+        ...prev,
+        isLiveActive: true,
+        region: res.region || regionToUse,
+        account: res.account,
+        arn: res.arn
+      }));
+
+      if (res.count > 0) {
         addToast(
           'success',
           'Live AWS Connected',
-          `Synced ${res.count || 0} EC2 instance(s) from AWS (${cloudStatus.region || 'ap-south-1'}).`
+          `Synced ${res.count} live EC2 instance(s) from AWS (${res.region || regionToUse}).`
         );
       } else {
-        if (isManual) {
-          addToast(
-            'error',
-            'AWS Sync Failed',
-            res.details || res.error || 'Check AWS IAM credentials in .env'
-          );
-        }
+        addToast(
+          'info',
+          `AWS Connected (0 instances in ${res.region || regionToUse})`,
+          'AWS IAM authenticated successfully. If your EC2 instances are in another region (e.g. us-east-1), open AWS Settings to switch.'
+        );
       }
     } catch (err: any) {
       if (isManual) {
         addToast(
           'error',
           'AWS Sync Error',
-          err?.message || 'Unable to connect to AWS live endpoint.'
+          err?.message || 'Check your AWS credentials in .env and restart dev server.'
         );
       }
     } finally {
@@ -562,10 +588,15 @@ export function App() {
               {/* Live AWS Connector Button & Status */}
               {cloudStatus.isLiveActive ? (
                 <div className="flex items-center gap-1.5">
-                  <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-btn bg-success/15 border border-success/30 text-success text-[11px] font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setIsAwsModalOpen(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-btn bg-success/15 hover:bg-success/25 border border-success/30 text-success text-[11px] font-semibold transition cursor-pointer"
+                    title="AWS Connected. Click to configure regions or view IAM account details."
+                  >
                     <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
-                    <span>AWS Live: {cloudStatus.region}</span>
-                  </div>
+                    <span>AWS: {cloudStatus.region}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => triggerAwsSync(true)}
@@ -586,16 +617,17 @@ export function App() {
                   </button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => triggerAwsSync(true)}
-                  disabled={syncingAws}
-                  className="px-2.5 py-1.5 rounded-btn bg-brand-indigo/15 hover:bg-brand-indigo/25 border border-brand-indigo/40 text-xs font-semibold text-brand-cyan flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
-                  title="Connect and pull live EC2 instances from your AWS account"
-                >
-                  <Zap className={`w-3.5 h-3.5 text-brand-cyan ${syncingAws ? 'animate-pulse' : ''}`} />
-                  <span>{syncingAws ? 'Syncing...' : 'Sync Live AWS'}</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsAwsModalOpen(true)}
+                    className="px-2.5 py-1.5 rounded-btn bg-[#FF9900]/15 hover:bg-[#FF9900]/25 border border-[#FF9900]/40 text-xs font-semibold text-[#FF9900] flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                    title="Configure AWS Region, test IAM keys, or sync live EC2 instances"
+                  >
+                    <Zap className="w-3.5 h-3.5 text-[#FF9900]" />
+                    <span>AWS Live Sync</span>
+                  </button>
+                </div>
               )}
 
               {/* Theme Toggle (Light / Dark) */}
@@ -799,6 +831,22 @@ export function App() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onAdd={handleAddResource}
+      />
+
+      {/* AWS Connection & Diagnostics Modal */}
+      <AwsConnectionModal
+        isOpen={isAwsModalOpen}
+        onClose={() => setIsAwsModalOpen(false)}
+        cloudStatus={cloudStatus}
+        onSync={async (reg) => {
+          await triggerAwsSync(true, reg);
+          setIsAwsModalOpen(false);
+        }}
+        onResetMock={async () => {
+          await handleResetMock();
+          setIsAwsModalOpen(false);
+        }}
+        syncing={syncingAws}
       />
     </div>
   );

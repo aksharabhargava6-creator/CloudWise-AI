@@ -20,8 +20,8 @@ import {
 } from "./cloudNormalizer.js";
 
 
-function getAwsClientConfig() {
-  const region = process.env.AWS_REGION || "ap-south-1";
+function getAwsClientConfig(regionOverride?: string) {
+  const region = regionOverride || process.env.AWS_REGION || "ap-south-1";
   if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
     return {
       region,
@@ -35,21 +35,41 @@ function getAwsClientConfig() {
   return { region };
 }
 
+export interface AwsConnectionResult {
+  connected: boolean;
+  arn?: string;
+  account?: string;
+  userId?: string;
+  region: string;
+  error?: string;
+}
+
 /*
  * ---------------------------------------------------------
- * 1. CLOUD CONNECTION TEST
+ * 1. CLOUD CONNECTION TEST & STS IDENTITY
  * ---------------------------------------------------------
  */
 
-export async function testAwsConnection(): Promise<boolean> {
+export async function testAwsConnection(regionOverride?: string): Promise<AwsConnectionResult> {
+  const config = getAwsClientConfig(regionOverride);
   try {
-    const stsClient = new STSClient(getAwsClientConfig());
-    await stsClient.send(new GetCallerIdentityCommand({}));
-    console.log("AWS connection successful. Authenticated AWS IAM credentials.");
-    return true;
-  } catch (error) {
-    console.error("AWS connection failed:", error);
-    return false;
+    const stsClient = new STSClient(config);
+    const callerId = await stsClient.send(new GetCallerIdentityCommand({}));
+    console.log(`[CloudWise-AI] AWS STS connected: Account ${callerId.Account}, ARN: ${callerId.Arn}`);
+    return {
+      connected: true,
+      arn: callerId.Arn,
+      account: callerId.Account,
+      userId: callerId.UserId,
+      region: config.region
+    };
+  } catch (error: any) {
+    console.error("[CloudWise-AI] AWS connection failed:", error);
+    return {
+      connected: false,
+      region: config.region,
+      error: error?.message || 'Failed to authenticate AWS IAM credentials'
+    };
   }
 }
 
@@ -60,9 +80,10 @@ export async function testAwsConnection(): Promise<boolean> {
  */
 
 export async function getEc2CpuUtilization(
-  instanceId: string
+  instanceId: string,
+  regionOverride?: string
 ): Promise<number | null> {
-  const cloudWatchClient = new CloudWatchClient(getAwsClientConfig());
+  const cloudWatchClient = new CloudWatchClient(getAwsClientConfig(regionOverride));
 
   const endTime =
     new Date();
@@ -148,8 +169,8 @@ export async function getEc2CpuUtilization(
  * ---------------------------------------------------------
  */
 
-export async function getEc2Instances(): Promise<AwsEc2RawResource[]> {
-  const clientConfig = getAwsClientConfig();
+export async function getEc2Instances(regionOverride?: string): Promise<AwsEc2RawResource[]> {
+  const clientConfig = getAwsClientConfig(regionOverride);
   const ec2Client = new EC2Client(clientConfig);
   const currentRegion = clientConfig.region;
 
@@ -181,10 +202,10 @@ export async function getEc2Instances(): Promise<AwsEc2RawResource[]> {
         const cpuUtilization =
           instanceId !== "unknown"
             ? await getEc2CpuUtilization(
-                instanceId
+                instanceId,
+                currentRegion
               )
             : null;
-
 
         const resource:
           AwsEc2RawResource = {
@@ -229,7 +250,6 @@ export async function getEc2Instances(): Promise<AwsEc2RawResource[]> {
               : null
         };
 
-
         resources.push(
           resource
         );
@@ -249,26 +269,17 @@ export async function getEc2Instances(): Promise<AwsEc2RawResource[]> {
   }
 }
 
-
 /*
  * ---------------------------------------------------------
  * 4. DATA NORMALIZATION
  * ---------------------------------------------------------
  */
 
-export async function
-getNormalizedAwsResources():
-Promise<NormalizedCloudResource[]> {
-
-  const awsResources =
-    await getEc2Instances();
-
-  return awsResources.map(
-    resource =>
-      normalizeAwsEc2Resource(
-        resource
-      )
-  );
+export async function getNormalizedAwsResources(
+  regionOverride?: string
+): Promise<NormalizedCloudResource[]> {
+  const awsResources = await getEc2Instances(regionOverride);
+  return awsResources.map(resource => normalizeAwsEc2Resource(resource));
 }
 
 

@@ -25,6 +25,11 @@ import {
 } from './src/server/services/cloud/awsCollector.js';
 
 import {
+  getMultiCloudStatus,
+  syncAllConfiguredClouds
+} from './src/server/services/cloud/multiCloudManager.js';
+
+import {
   AnalysisResponse,
   CloudResource,
   DashboardOverview,
@@ -109,11 +114,14 @@ app.get(
     const hasAwsCreds = Boolean(
       process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
     );
+    const key = process.env.AWS_ACCESS_KEY_ID || '';
+    const maskedKey = key ? `${key.substring(0, 4)}...${key.substring(Math.max(0, key.length - 4))}` : null;
     const region = process.env.AWS_REGION || 'ap-south-1';
     const isLiveActive = cloudService.isLiveAwsActive();
 
     return res.json({
       awsConfigured: hasAwsCreds,
+      maskedKey,
       region,
       isLiveActive,
       totalResources: cloudService.getAllResources().length
@@ -122,14 +130,63 @@ app.get(
 );
 
 /*
+ * GET & POST /api/cloud/aws/test
+ *
+ * Diagnostic endpoint to test AWS STS credentials and identity.
+ */
+const handleAwsTest = async (req: Request, res: Response) => {
+  const region = (req.body?.region || req.query?.region as string || process.env.AWS_REGION || 'ap-south-1');
+  const result = await testAwsConnection(region);
+  return res.json(result);
+};
+app.get('/api/cloud/aws/test', handleAwsTest);
+app.post('/api/cloud/aws/test', handleAwsTest);
+
+/*
+ * GET /api/cloud/platforms
+ *
+ * Retrieves status for all 3 supported platforms (AWS, Azure, GCP)
+ */
+app.get('/api/cloud/platforms', (_req: Request, res: Response) => {
+  res.json(getMultiCloudStatus());
+});
+
+/*
+ * POST /api/cloud/sync-all
+ *
+ * Synchronizes all clouds that have credentials configured in .env
+ */
+app.post('/api/cloud/sync-all', async (_req: Request, res: Response) => {
+  try {
+    const outcome = await syncAllConfiguredClouds();
+    res.json({
+      success: true,
+      message: 'Multi-cloud synchronization complete',
+      platforms: outcome.results,
+      resources: outcome.allResources
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to synchronize multi-cloud platforms',
+      details: error?.message
+    });
+  }
+});
+
+/*
  * POST & GET /api/cloud/aws/sync
  *
  * Actively connects to AWS EC2 + CloudWatch, collects and normalizes
  * all EC2 instances, and updates the shared FinOps resource store.
  */
-const handleAwsSync = async (_req: Request, res: Response) => {
+const handleAwsSync = async (req: Request, res: Response) => {
+  const targetRegion = (req.body?.region || req.query?.region as string || process.env.AWS_REGION || 'ap-south-1');
   try {
-    const normalizedAws = await getNormalizedAwsResources();
+    const [normalizedAws, connection] = await Promise.all([
+      getNormalizedAwsResources(targetRegion),
+      testAwsConnection(targetRegion)
+    ]);
 
     const cloudResources: CloudResource[] = normalizedAws.map(r => ({
       id: r.id,
@@ -153,13 +210,16 @@ const handleAwsSync = async (_req: Request, res: Response) => {
     // Replace previous AWS instances with live AWS instances
     cloudService.replaceProviderResources('AWS', cloudResources);
 
-    console.log(`[CloudWise-AI] Successfully synchronized ${cloudResources.length} live AWS EC2 instances.`);
+    console.log(`[CloudWise-AI] Successfully synchronized ${cloudResources.length} live AWS EC2 instances in ${targetRegion}.`);
 
     return res.json({
       success: true,
       provider: 'AWS',
       source: 'live',
-      message: `Successfully synchronized ${cloudResources.length} live AWS EC2 instance(s) from ${process.env.AWS_REGION || 'ap-south-1'}`,
+      region: targetRegion,
+      account: connection.account,
+      arn: connection.arn,
+      message: `Successfully synchronized ${cloudResources.length} live AWS EC2 instance(s) from ${targetRegion}`,
       count: cloudResources.length,
       resources: cloudService.getAllResources()
     });
@@ -168,6 +228,7 @@ const handleAwsSync = async (_req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'Failed to synchronize live AWS resources',
+      region: targetRegion,
       details: error?.message || 'Check AWS IAM credentials and permissions'
     });
   }
