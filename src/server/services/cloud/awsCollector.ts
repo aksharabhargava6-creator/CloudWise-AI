@@ -20,8 +20,20 @@ import {
 } from "./cloudNormalizer.js";
 
 
-const AWS_REGION = "ap-south-1";
-
+function getAwsClientConfig() {
+  const region = process.env.AWS_REGION || "ap-south-1";
+  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    return {
+      region,
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        sessionToken: process.env.AWS_SESSION_TOKEN || undefined
+      }
+    };
+  }
+  return { region };
+}
 
 /*
  * ---------------------------------------------------------
@@ -29,41 +41,17 @@ const AWS_REGION = "ap-south-1";
  * ---------------------------------------------------------
  */
 
-export async function testAwsConnection():
-Promise<boolean> {
-
+export async function testAwsConnection(): Promise<boolean> {
   try {
-
-    const stsClient =
-      new STSClient({
-        region: AWS_REGION
-      });
-
-    await stsClient.send(
-      new GetCallerIdentityCommand({})
-    );
-
-    console.log(
-      "AWS connection successful."
-    );
-
-    console.log(
-      "Authenticated AWS IAM user successfully."
-    );
-
+    const stsClient = new STSClient(getAwsClientConfig());
+    await stsClient.send(new GetCallerIdentityCommand({}));
+    console.log("AWS connection successful. Authenticated AWS IAM credentials.");
     return true;
-
   } catch (error) {
-
-    console.error(
-      "AWS connection failed:",
-      error
-    );
-
+    console.error("AWS connection failed:", error);
     return false;
   }
 }
-
 
 /*
  * ---------------------------------------------------------
@@ -74,11 +62,7 @@ Promise<boolean> {
 export async function getEc2CpuUtilization(
   instanceId: string
 ): Promise<number | null> {
-
-  const cloudWatchClient =
-    new CloudWatchClient({
-      region: AWS_REGION
-    });
+  const cloudWatchClient = new CloudWatchClient(getAwsClientConfig());
 
   const endTime =
     new Date();
@@ -164,23 +148,15 @@ export async function getEc2CpuUtilization(
  * ---------------------------------------------------------
  */
 
-export async function getEc2Instances():
-Promise<AwsEc2RawResource[]> {
+export async function getEc2Instances(): Promise<AwsEc2RawResource[]> {
+  const clientConfig = getAwsClientConfig();
+  const ec2Client = new EC2Client(clientConfig);
+  const currentRegion = clientConfig.region;
 
-  const ec2Client =
-    new EC2Client({
-      region: AWS_REGION
-    });
-
-  const resources:
-    AwsEc2RawResource[] = [];
+  const resources: AwsEc2RawResource[] = [];
 
   try {
-
-    const response =
-      await ec2Client.send(
-        new DescribeInstancesCommand({})
-      );
+    const response = await ec2Client.send(new DescribeInstancesCommand({}));
 
     for (
       const reservation
@@ -227,7 +203,7 @@ Promise<AwsEc2RawResource[]> {
             "EC2",
 
           region:
-            AWS_REGION,
+            currentRegion,
 
           status:
             instance.State?.Name ??

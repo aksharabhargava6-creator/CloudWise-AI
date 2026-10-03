@@ -1,6 +1,6 @@
 import { CloudResource, MetricData, CostData, ResourceData, DashboardOverview } from '../../types/cloudwise.js';
 
-let resourcesStore: CloudResource[] = [
+const initialResourcesStore: CloudResource[] = [
   // 1. AWS EC2 - high_cpu_and_traffic anomaly
   {
     id: 'res-aws-01',
@@ -449,6 +449,9 @@ let resourcesStore: CloudResource[] = [
   }
 ];
 
+let resourcesStore: CloudResource[] = [...initialResourcesStore];
+let liveAwsSynced: boolean = false;
+
 // 12 months of per-provider monthly cost history
 export const historicalCosts: CostData[] = [
   { date: '2025-11-01', cloud: 'AWS', total_cost: 1420 },
@@ -597,5 +600,24 @@ export const cloudService = {
       }));
     }
     return historicalCosts.filter(c => c.cloud.toLowerCase() === provider.toLowerCase());
+  },
+
+  isLiveAwsActive(): boolean {
+    return liveAwsSynced;
+  },
+
+  replaceProviderResources(provider: 'AWS' | 'Azure' | 'GCP', newResources: CloudResource[]): void {
+    resourcesStore = [
+      ...newResources,
+      ...resourcesStore.filter(r => r.provider !== provider)
+    ];
+    if (provider === 'AWS') {
+      liveAwsSynced = true;
+    }
+  },
+
+  resetToDefault(): void {
+    resourcesStore = [...initialResourcesStore];
+    liveAwsSynced = false;
   }
 };

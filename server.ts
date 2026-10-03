@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express, {
   Request,
   Response,
@@ -17,11 +20,13 @@ import { generateRecommendations } from './src/server/services/recommendationSer
  * Live AWS multi-cloud collector
  */
 import {
-  getNormalizedAwsResources
+  getNormalizedAwsResources,
+  testAwsConnection
 } from './src/server/services/cloud/awsCollector.js';
 
 import {
   AnalysisResponse,
+  CloudResource,
   DashboardOverview,
   MetricData,
   CostData,
@@ -92,6 +97,98 @@ app.get(
 // LIVE MULTI-CLOUD ENDPOINTS
 // -------------------------------------------------------------
 
+
+/*
+ * GET /api/cloud/status
+ *
+ * Checks if AWS credentials are configured, connection health, and current mode.
+ */
+app.get(
+  '/api/cloud/status',
+  async (_req: Request, res: Response) => {
+    const hasAwsCreds = Boolean(
+      process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+    );
+    const region = process.env.AWS_REGION || 'ap-south-1';
+    const isLiveActive = cloudService.isLiveAwsActive();
+
+    return res.json({
+      awsConfigured: hasAwsCreds,
+      region,
+      isLiveActive,
+      totalResources: cloudService.getAllResources().length
+    });
+  }
+);
+
+/*
+ * POST & GET /api/cloud/aws/sync
+ *
+ * Actively connects to AWS EC2 + CloudWatch, collects and normalizes
+ * all EC2 instances, and updates the shared FinOps resource store.
+ */
+const handleAwsSync = async (_req: Request, res: Response) => {
+  try {
+    const normalizedAws = await getNormalizedAwsResources();
+
+    const cloudResources: CloudResource[] = normalizedAws.map(r => ({
+      id: r.id,
+      name: r.name,
+      provider: 'AWS',
+      resource_type: r.resource_type,
+      region: r.region,
+      status: r.status,
+      instance_type: r.instance_type,
+      cpu_utilization: r.cpu_utilization,
+      memory_utilization: r.memory_utilization,
+      storage_utilization: r.storage_utilization,
+      network_in_mb: r.network_in_mb,
+      network_out_mb: r.network_out_mb,
+      cost_usd: r.cost_usd,
+      monthly_cost: r.monthly_cost,
+      anomaly_type: r.anomaly_type,
+      created_at: new Date().toISOString()
+    }));
+
+    // Replace previous AWS instances with live AWS instances
+    cloudService.replaceProviderResources('AWS', cloudResources);
+
+    console.log(`[CloudWise-AI] Successfully synchronized ${cloudResources.length} live AWS EC2 instances.`);
+
+    return res.json({
+      success: true,
+      provider: 'AWS',
+      source: 'live',
+      message: `Successfully synchronized ${cloudResources.length} live AWS EC2 instance(s) from ${process.env.AWS_REGION || 'ap-south-1'}`,
+      count: cloudResources.length,
+      resources: cloudService.getAllResources()
+    });
+  } catch (error: any) {
+    console.error('Failed to sync live AWS resources:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to synchronize live AWS resources',
+      details: error?.message || 'Check AWS IAM credentials and permissions'
+    });
+  }
+};
+
+app.post('/api/cloud/aws/sync', handleAwsSync);
+app.get('/api/cloud/aws/sync', handleAwsSync);
+
+/*
+ * POST /api/cloud/reset-mock
+ *
+ * Restores the multi-cloud simulated dataset.
+ */
+app.post('/api/cloud/reset-mock', (_req: Request, res: Response) => {
+  cloudService.resetToDefault();
+  return res.json({
+    success: true,
+    message: 'Reset back to simulated multi-cloud dataset',
+    resources: cloudService.getAllResources()
+  });
+});
 
 /*
  * GET /api/cloud/aws/live
@@ -1147,6 +1244,41 @@ async function startServer() {
       console.log(
         `CloudWise-AI full-stack server running on http://0.0.0.0:${PORT}`
       );
+
+      // Attempt automatic live AWS sync if credentials are configured
+      if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        console.log(`[CloudWise-AI] AWS credentials detected in environment. Attempting initial sync in ${process.env.AWS_REGION || 'ap-south-1'}...`);
+        getNormalizedAwsResources()
+          .then(normalizedAws => {
+            if (normalizedAws && normalizedAws.length > 0) {
+              const cloudResources: CloudResource[] = normalizedAws.map(r => ({
+                id: r.id,
+                name: r.name,
+                provider: 'AWS',
+                resource_type: r.resource_type,
+                region: r.region,
+                status: r.status,
+                instance_type: r.instance_type,
+                cpu_utilization: r.cpu_utilization,
+                memory_utilization: r.memory_utilization,
+                storage_utilization: r.storage_utilization,
+                network_in_mb: r.network_in_mb,
+                network_out_mb: r.network_out_mb,
+                cost_usd: r.cost_usd,
+                monthly_cost: r.monthly_cost,
+                anomaly_type: r.anomaly_type,
+                created_at: new Date().toISOString()
+              }));
+              cloudService.replaceProviderResources('AWS', cloudResources);
+              console.log(`[CloudWise-AI] Successfully synchronized ${cloudResources.length} live EC2 instances on startup.`);
+            } else {
+              console.log(`[CloudWise-AI] Connected to AWS, but no EC2 instances found in region ${process.env.AWS_REGION || 'ap-south-1'}.`);
+            }
+          })
+          .catch(err => {
+            console.warn('[CloudWise-AI] Initial AWS background sync warning:', err?.message);
+          });
+      }
     }
   );
 }

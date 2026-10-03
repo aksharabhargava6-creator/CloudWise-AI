@@ -69,6 +69,12 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [globalSearch, setGlobalSearch] = useState<string>('');
+  const [cloudStatus, setCloudStatus] = useState<{
+    awsConfigured: boolean;
+    region: string;
+    isLiveActive: boolean;
+  }>({ awsConfigured: false, region: 'ap-south-1', isLiveActive: false });
+  const [syncingAws, setSyncingAws] = useState<boolean>(false);
 
   // Apply theme class to document root
   useEffect(() => {
@@ -94,15 +100,19 @@ export function App() {
     setLoading(true);
     setError(null);
     try {
-      const [resOverview, resResources, resCosts] = await Promise.all([
+      const [resOverview, resResources, resCosts, resStatus] = await Promise.all([
         fetch('/api/ai/overview').then((r) => r.json()),
         fetch('/api/cloud/resources').then((r) => r.json()),
         fetch('/api/ai/dataset/costs').then((r) => r.json()),
+        fetch('/api/cloud/status').then((r) => r.json()).catch(() => null),
       ]);
 
       setOverview(resOverview);
       setResources(resResources);
       setHistoricalCosts(resCosts);
+      if (resStatus) {
+        setCloudStatus(resStatus);
+      }
 
       // Trigger /ai/analyze once on load
       const analysisRes = await fetch('/ai/analyze', {
@@ -122,6 +132,89 @@ export function App() {
       addToast('error', 'Initialization Error', 'Unable to fetch cloud telemetry metrics.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Trigger Live AWS Sync
+  const triggerAwsSync = async (isManual: boolean = true) => {
+    setSyncingAws(true);
+    try {
+      const res = await fetch('/api/cloud/aws/sync', { method: 'POST' }).then((r) => r.json());
+      if (res.success) {
+        if (res.resources) {
+          setResources(res.resources);
+        }
+        // Refresh overview metrics with new live resources
+        const updatedOverview = await fetch('/api/ai/overview').then((r) => r.json());
+        setOverview(updatedOverview);
+
+        // Re-run AI analysis on the updated inventory
+        const analysisRes = await fetch('/ai/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }).then((r) => r.json());
+
+        if (analysisRes) {
+          setAnomalies(analysisRes.anomalies || []);
+          setForecast(analysisRes.forecast || []);
+          setRecommendations(analysisRes.recommendations || []);
+        }
+
+        setCloudStatus((prev) => ({ ...prev, isLiveActive: true }));
+        addToast(
+          'success',
+          'Live AWS Connected',
+          `Synced ${res.count || 0} EC2 instance(s) from AWS (${cloudStatus.region || 'ap-south-1'}).`
+        );
+      } else {
+        if (isManual) {
+          addToast(
+            'error',
+            'AWS Sync Failed',
+            res.details || res.error || 'Check AWS IAM credentials in .env'
+          );
+        }
+      }
+    } catch (err: any) {
+      if (isManual) {
+        addToast(
+          'error',
+          'AWS Sync Error',
+          err?.message || 'Unable to connect to AWS live endpoint.'
+        );
+      }
+    } finally {
+      setSyncingAws(false);
+    }
+  };
+
+  // Restore simulated dataset
+  const handleResetMock = async () => {
+    try {
+      const res = await fetch('/api/cloud/reset-mock', { method: 'POST' }).then((r) => r.json());
+      if (res.resources) {
+        setResources(res.resources);
+      }
+      const updatedOverview = await fetch('/api/ai/overview').then((r) => r.json());
+      setOverview(updatedOverview);
+
+      const analysisRes = await fetch('/ai/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }).then((r) => r.json());
+
+      if (analysisRes) {
+        setAnomalies(analysisRes.anomalies || []);
+        setForecast(analysisRes.forecast || []);
+        setRecommendations(analysisRes.recommendations || []);
+      }
+
+      setCloudStatus((prev) => ({ ...prev, isLiveActive: false }));
+      addToast('info', 'Demo Dataset Active', 'Switched back to simulated multi-cloud dataset.');
+    } catch (err: any) {
+      addToast('error', 'Reset Error', err?.message || 'Failed to reset dataset.');
     }
   };
 
@@ -465,7 +558,46 @@ export function App() {
             </div>
 
             {/* Right: Actions, Theme Toggle, Primary Add Resource */}
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Live AWS Connector Button & Status */}
+              {cloudStatus.isLiveActive ? (
+                <div className="flex items-center gap-1.5">
+                  <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-btn bg-success/15 border border-success/30 text-success text-[11px] font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+                    <span>AWS Live: {cloudStatus.region}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => triggerAwsSync(true)}
+                    disabled={syncingAws}
+                    className="px-2.5 py-1.5 rounded-btn bg-elevated hover:bg-surface border border-border text-xs font-medium text-text flex items-center gap-1.5 transition disabled:opacity-50"
+                    title="Refresh live EC2 inventory from AWS"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-brand-cyan ${syncingAws ? 'animate-spin' : ''}`} />
+                    <span className="hidden sm:inline">{syncingAws ? 'Syncing...' : 'Sync AWS'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetMock}
+                    className="px-2 py-1 rounded-btn hover:bg-elevated text-[11px] text-muted hover:text-text transition hidden lg:inline-block border border-transparent hover:border-border"
+                    title="Switch back to simulated multi-cloud dataset"
+                  >
+                    Demo Data
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => triggerAwsSync(true)}
+                  disabled={syncingAws}
+                  className="px-2.5 py-1.5 rounded-btn bg-brand-indigo/15 hover:bg-brand-indigo/25 border border-brand-indigo/40 text-xs font-semibold text-brand-cyan flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
+                  title="Connect and pull live EC2 instances from your AWS account"
+                >
+                  <Zap className={`w-3.5 h-3.5 text-brand-cyan ${syncingAws ? 'animate-pulse' : ''}`} />
+                  <span>{syncingAws ? 'Syncing...' : 'Sync Live AWS'}</span>
+                </button>
+              )}
+
               {/* Theme Toggle (Light / Dark) */}
               <button
                 type="button"
