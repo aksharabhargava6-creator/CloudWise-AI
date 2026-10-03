@@ -528,6 +528,12 @@ export const cloudService = {
     return newRes;
   },
 
+  getResourceByIdOrName(nameOrId: string): CloudResource | undefined {
+    return resourcesStore.find(
+      r => r.name.toLowerCase() === nameOrId.toLowerCase() || r.id === nameOrId
+    );
+  },
+
   updateResource(nameOrId: string, updates: Partial<CloudResource>): CloudResource | null {
     const idx = resourcesStore.findIndex(
       r => r.name.toLowerCase() === nameOrId.toLowerCase() || r.id === nameOrId

@@ -277,8 +277,18 @@ export function App() {
   // Toggle Resource Status (Start / Stop)
   const handleToggleResourceStatus = async (resource: CloudResource) => {
     const nextStatus = resource.status === 'running' ? 'stopped' : 'running';
+    const isLiveAws = resource.provider === 'AWS' && resource.id.startsWith('i-');
+
+    if (isLiveAws) {
+      addToast(
+        'info',
+        `${nextStatus === 'stopped' ? 'Stopping' : 'Starting'} AWS Instance`,
+        `Sending ${nextStatus === 'stopped' ? 'ec2:StopInstances' : 'ec2:StartInstances'} to AWS for ${resource.id}...`
+      );
+    }
+
     try {
-      const updated = await fetch(`/api/cloud/resources/${resource.id}`, {
+      const response = await fetch(`/api/cloud/resources/${resource.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -286,22 +296,42 @@ export function App() {
           cpu_utilization: nextStatus === 'stopped' ? 0 : 45,
           cost_usd: nextStatus === 'stopped' ? 0.05 : resource.cost_usd,
         }),
-      }).then((r) => r.json());
+      });
+
+      const updated = await response.json().catch(() => null);
+
+      if (!response.ok || !updated || updated.error) {
+        throw new Error(updated?.error || updated?.details || `Failed to ${nextStatus} resource (HTTP ${response.status})`);
+      }
 
       setResources((prev) => prev.map((r) => (r.id === resource.id ? updated : r)));
-      addToast('success', 'Resource Updated', `Switched ${resource.name} to ${nextStatus}.`);
+
+      if (isLiveAws) {
+        addToast(
+          'success',
+          `AWS EC2 Command Executed`,
+          `AWS confirmed instance ${resource.id} is now ${updated.awsState?.currentState || nextStatus}.`
+        );
+      } else {
+        addToast('success', 'Resource Updated', `Switched ${resource.name} to ${nextStatus}.`);
+      }
+
       await handleRunAnalysis();
     } catch (err: any) {
-      addToast('error', 'Update Failed', err.message);
+      addToast('error', isLiveAws ? 'AWS Command Failed' : 'Update Failed', err.message);
     }
   };
 
   // Delete Resource
   const handleDeleteResource = async (id: string) => {
     try {
-      await fetch(`/api/cloud/resources/${id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/cloud/resources/${id}`, { method: 'DELETE' });
+      const res = await response.json().catch(() => null);
+      if (!response.ok || (res && res.error)) {
+        throw new Error(res?.error || `Failed to delete resource`);
+      }
       setResources((prev) => prev.filter((r) => r.id !== id));
-      addToast('info', 'Resource Terminated', `Asset ${id} removed from multi-cloud catalog.`);
+      addToast('info', 'Resource Removed', `Asset ${id} removed from FinOps catalog.`);
       await handleRunAnalysis();
     } catch (err: any) {
       addToast('error', 'Delete Failed', err.message);

@@ -354,18 +354,21 @@ export const AwsConnectionModal: React.FC<AwsConnectionModalProps> = ({
                 <Key className="w-3.5 h-3.5 text-muted" />
                 Required IAM Permissions
               </span>
-              <span className="text-[11px] text-muted">Read-Only</span>
+              <span className="text-[11px] text-muted">Read + Power Control</span>
             </div>
             <div className="text-[11px] text-muted space-y-1">
-              <p>Ensure your AWS IAM user has the following AWS-managed policies attached:</p>
+              <p>To view inventory, metrics, and stop/start EC2 instances from CloudWise-AI:</p>
               <div className="flex flex-wrap gap-1.5 mt-1">
-                <span className="px-2 py-0.5 rounded bg-surface border border-border font-mono text-[10px] text-brand-cyan">
-                  AmazonEC2ReadOnlyAccess
+                <span className="px-2 py-0.5 rounded bg-surface border border-border font-mono text-[10px] text-brand-cyan" title="Allows CloudWise-AI to stop & start EC2 instances">
+                  AmazonEC2FullAccess
                 </span>
-                <span className="px-2 py-0.5 rounded bg-surface border border-border font-mono text-[10px] text-brand-cyan">
+                <span className="px-2 py-0.5 rounded bg-surface border border-border font-mono text-[10px] text-brand-cyan" title="Allows CloudWise-AI to read CloudWatch CPU metrics">
                   CloudWatchReadOnlyAccess
                 </span>
               </div>
+              <p className="text-[10px] text-muted/80 mt-1">
+                *(Note: If your IAM user only has ReadOnly access, the Stop/Start power button will be blocked by AWS with Permission Denied).*
+              </p>
             </div>
           </div>
         </div>

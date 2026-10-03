@@ -21,7 +21,10 @@ import { generateRecommendations } from './src/server/services/recommendationSer
  */
 import {
   getNormalizedAwsResources,
-  testAwsConnection
+  testAwsConnection,
+  stopAwsEc2Instance,
+  startAwsEc2Instance,
+  terminateAwsEc2Instance
 } from './src/server/services/cloud/awsCollector.js';
 
 import {
@@ -533,13 +536,49 @@ app.post(
 
 app.patch(
   '/api/cloud/resources/:id',
-  (req: Request, res: Response) => {
-
+  async (req: Request, res: Response) => {
     const id =
       Array.isArray(req.params.id)
         ? req.params.id[0]
         : req.params.id;
 
+    const existing = cloudService.getResourceByIdOrName(id);
+    if (!existing) {
+      return res.status(404).json({
+        error: 'Resource not found'
+      });
+    }
+
+    let awsStateResult: any = null;
+
+    // Check if this is a live AWS EC2 instance (id starts with 'i-')
+    if (existing.provider === 'AWS' && req.body.status && req.body.status !== existing.status) {
+      const targetState = req.body.status;
+      if (existing.id.startsWith('i-')) {
+        try {
+          if (targetState === 'stopped') {
+            console.log(`[CloudWise-AI] Executing live AWS EC2 stop on ${existing.id} (${existing.region})...`);
+            awsStateResult = await stopAwsEc2Instance(existing.id, existing.region);
+          } else if (targetState === 'running') {
+            console.log(`[CloudWise-AI] Executing live AWS EC2 start on ${existing.id} (${existing.region})...`);
+            awsStateResult = await startAwsEc2Instance(existing.id, existing.region);
+          }
+        } catch (awsError: any) {
+          console.error(`[CloudWise-AI] AWS EC2 ${targetState} failed for ${existing.id}:`, awsError);
+          const errorMsg = awsError?.message || '';
+          if (awsError?.name === 'UnauthorizedOperation' || errorMsg.includes('not authorized to perform this operation')) {
+            return res.status(403).json({
+              error: `AWS IAM Permission Denied: Your IAM user only has Read-Only permissions. To stop/start instances directly from CloudWise-AI, go to AWS IAM Console > Users > Add permissions > Attach "AmazonEC2FullAccess" (or custom policy with ec2:StopInstances and ec2:StartInstances).`,
+              code: 'UnauthorizedOperation'
+            });
+          }
+          return res.status(500).json({
+            error: `AWS EC2 failed to ${targetState} instance: ${errorMsg}`,
+            details: errorMsg
+          });
+        }
+      }
+    }
 
     const updated =
       cloudService.updateResource(
@@ -547,45 +586,59 @@ app.patch(
         req.body
       );
 
-
     if (!updated) {
-
       return res.status(404).json({
         error: 'Resource not found'
       });
     }
 
-
-    return res.json(updated);
+    return res.json({
+      ...updated,
+      awsState: awsStateResult
+    });
   }
 );
 
 
 app.delete(
   '/api/cloud/resources/:id',
-  (req: Request, res: Response) => {
-
+  async (req: Request, res: Response) => {
     const id =
       Array.isArray(req.params.id)
         ? req.params.id[0]
         : req.params.id;
 
-
-    const success =
-      cloudService.deleteResource(id);
-
-
-    if (!success) {
-
+    const existing = cloudService.getResourceByIdOrName(id);
+    if (!existing) {
       return res.status(404).json({
         error: 'Resource not found'
       });
     }
 
+    // Optional termination on AWS if explicitly requested
+    if (existing.provider === 'AWS' && existing.id.startsWith('i-') && req.query.terminateOnAws === 'true') {
+      try {
+        await terminateAwsEc2Instance(existing.id, existing.region);
+      } catch (awsError: any) {
+        console.error(`[CloudWise-AI] AWS EC2 terminate failed:`, awsError);
+        return res.status(403).json({
+          error: `AWS IAM permission denied: ec2:TerminateInstances not allowed. ${awsError?.message}`
+        });
+      }
+    }
+
+    const success =
+      cloudService.deleteResource(id);
+
+    if (!success) {
+      return res.status(404).json({
+        error: 'Resource not found'
+      });
+    }
 
     return res.json({
-      message:
-        'Resource deleted successfully'
+      message: 'Resource deleted successfully',
+      id
     });
   }
 );

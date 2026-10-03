@@ -5,7 +5,10 @@ import {
 
 import {
   EC2Client,
-  DescribeInstancesCommand
+  DescribeInstancesCommand,
+  StopInstancesCommand,
+  StartInstancesCommand,
+  TerminateInstancesCommand
 } from "@aws-sdk/client-ec2";
 
 import {
@@ -355,6 +358,62 @@ async function runTest() {
   );
 }
 
+
+/*
+ * ---------------------------------------------------------
+ * 5. EC2 POWER & LIFECYCLE MANAGEMENT (STOP / START / TERMINATE)
+ * ---------------------------------------------------------
+ */
+
+export async function stopAwsEc2Instance(instanceId: string, regionOverride?: string) {
+  const config = getAwsClientConfig(regionOverride);
+  const ec2Client = new EC2Client(config);
+  console.log(`[CloudWise-AI] Sending StopInstances command for ${instanceId} in ${config.region}...`);
+  const response = await ec2Client.send(new StopInstancesCommand({
+    InstanceIds: [instanceId]
+  }));
+  const stateChange = response.StoppingInstances?.[0];
+  console.log(`[CloudWise-AI] AWS EC2 ${instanceId} state: ${stateChange?.PreviousState?.Name} -> ${stateChange?.CurrentState?.Name}`);
+  return {
+    success: true,
+    instanceId,
+    previousState: stateChange?.PreviousState?.Name,
+    currentState: stateChange?.CurrentState?.Name || 'stopping'
+  };
+}
+
+export async function startAwsEc2Instance(instanceId: string, regionOverride?: string) {
+  const config = getAwsClientConfig(regionOverride);
+  const ec2Client = new EC2Client(config);
+  console.log(`[CloudWise-AI] Sending StartInstances command for ${instanceId} in ${config.region}...`);
+  const response = await ec2Client.send(new StartInstancesCommand({
+    InstanceIds: [instanceId]
+  }));
+  const stateChange = response.StartingInstances?.[0];
+  console.log(`[CloudWise-AI] AWS EC2 ${instanceId} state: ${stateChange?.PreviousState?.Name} -> ${stateChange?.CurrentState?.Name}`);
+  return {
+    success: true,
+    instanceId,
+    previousState: stateChange?.PreviousState?.Name,
+    currentState: stateChange?.CurrentState?.Name || 'pending'
+  };
+}
+
+export async function terminateAwsEc2Instance(instanceId: string, regionOverride?: string) {
+  const config = getAwsClientConfig(regionOverride);
+  const ec2Client = new EC2Client(config);
+  console.log(`[CloudWise-AI] Sending TerminateInstances command for ${instanceId} in ${config.region}...`);
+  const response = await ec2Client.send(new TerminateInstancesCommand({
+    InstanceIds: [instanceId]
+  }));
+  const stateChange = response.TerminatingInstances?.[0];
+  return {
+    success: true,
+    instanceId,
+    previousState: stateChange?.PreviousState?.Name,
+    currentState: stateChange?.CurrentState?.Name || 'shutting-down'
+  };
+}
 
 /*
  * Run test only when this file
