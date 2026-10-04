@@ -14,6 +14,7 @@
     "@aws-sdk/client-sts": "^3.1145.0",
     "clsx": "^2.1.1",
     "cors": "^2.8.6",
+    "dotenv": "^18.0.5",
     "express": "^5.2.1",
     "lucide-react": "^1.49.0",
     "react": "^19.3.0",
