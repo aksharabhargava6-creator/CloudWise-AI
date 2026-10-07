@@ -1,21 +1,23 @@
+
 import dotenv from 'dotenv';
 dotenv.config();
-
+ 
 import express, {
   Request,
   Response,
   NextFunction
 } from 'express';
-
+ 
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-
+ 
 import { cloudService } from './src/server/services/cloudService.js';
 import { detectCpuAnomalies } from './src/server/services/anomalyService.js';
 import { forecastCost } from './src/server/services/forecastService.js';
 import { generateRecommendations } from './src/server/services/recommendationService.js';
-
+import { dbClient } from './src/server/services/dbClient.js';
+ 
 /*
  * Live AWS multi-cloud collector
  */
@@ -26,12 +28,12 @@ import {
   startAwsEc2Instance,
   terminateAwsEc2Instance
 } from './src/server/services/cloud/awsCollector.js';
-
+ 
 import {
   getMultiCloudStatus,
   syncAllConfiguredClouds
 } from './src/server/services/cloud/multiCloudManager.js';
-
+ 
 import {
   AnalysisResponse,
   CloudResource,
@@ -40,72 +42,45 @@ import {
   CostData,
   ResourceData
 } from './src/types/cloudwise.js';
-
-
+ 
+ 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-
+ 
+ 
 const app = express();
-
-const PORT = parseInt(
-  process.env.PORT || '3000',
-  10
-);
-
-
+ 
+const PORT = parseInt(process.env.PORT || '3000', 10);
+ 
+ 
 app.use(cors());
-
-app.use(
-  express.json({
-    limit: '10mb'
-  })
-);
-
-
+ 
+app.use(express.json({ limit: '10mb' }));
+ 
+ 
 // -------------------------------------------------------------
 // Health & Diagnostic Endpoints
 // -------------------------------------------------------------
-
-
-app.get(
-  '/health',
-  (_req: Request, res: Response) => {
-
-    res.json({
-      status: 'healthy'
-    });
-  }
-);
-
-
-app.get(
-  '/api/health',
-  (_req: Request, res: Response) => {
-
-    res.json({
-      status: 'healthy'
-    });
-  }
-);
-
-
-app.get(
-  '/api/auth/test',
-  (_req: Request, res: Response) => {
-
-    res.json({
-      message: 'Authentication API is working'
-    });
-  }
-);
-
-
+ 
+ 
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'healthy' });
+});
+ 
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ status: 'healthy' });
+});
+ 
+app.get('/api/auth/test', (_req: Request, res: Response) => {
+  res.json({ message: 'Authentication API is working' });
+});
+ 
+ 
 // -------------------------------------------------------------
 // LIVE MULTI-CLOUD ENDPOINTS
 // -------------------------------------------------------------
-
-
+ 
+ 
 /*
  * GET /api/cloud/status
  *
@@ -121,7 +96,7 @@ app.get(
     const maskedKey = key ? `${key.substring(0, 4)}...${key.substring(Math.max(0, key.length - 4))}` : null;
     const region = process.env.AWS_REGION || 'ap-south-1';
     const isLiveActive = cloudService.isLiveAwsActive();
-
+ 
     return res.json({
       awsConfigured: hasAwsCreds,
       maskedKey,
@@ -131,7 +106,7 @@ app.get(
     });
   }
 );
-
+ 
 /*
  * GET & POST /api/cloud/aws/test
  *
@@ -144,7 +119,7 @@ const handleAwsTest = async (req: Request, res: Response) => {
 };
 app.get('/api/cloud/aws/test', handleAwsTest);
 app.post('/api/cloud/aws/test', handleAwsTest);
-
+ 
 /*
  * POST /api/cloud/aws/configure
  *
@@ -159,12 +134,12 @@ app.post('/api/cloud/aws/configure', async (req: Request, res: Response) => {
         error: 'Both Access Key ID and Secret Access Key are required.'
       });
     }
-
+ 
     const cleanKey = String(accessKeyId).trim().replace(/^["']|["']$/g, '');
     const cleanSecret = String(secretAccessKey).trim().replace(/^["']|["']$/g, '');
     const cleanToken = sessionToken ? String(sessionToken).trim().replace(/^["']|["']$/g, '') : undefined;
     const cleanRegion = (region ? String(region).trim() : null) || process.env.AWS_REGION || 'ap-south-1';
-
+ 
     process.env.AWS_ACCESS_KEY_ID = cleanKey;
     process.env.AWS_SECRET_ACCESS_KEY = cleanSecret;
     if (cleanToken && cleanToken.length > 0) {
@@ -173,7 +148,7 @@ app.post('/api/cloud/aws/configure', async (req: Request, res: Response) => {
       delete process.env.AWS_SESSION_TOKEN;
     }
     process.env.AWS_REGION = cleanRegion;
-
+ 
     // Test connection with the newly applied credentials
     const testResult = await testAwsConnection(cleanRegion);
     if (!testResult.connected) {
@@ -183,7 +158,7 @@ app.post('/api/cloud/aws/configure', async (req: Request, res: Response) => {
         diagnostic: testResult
       });
     }
-
+ 
     // Immediately sync live instances
     const normalizedAws = await getNormalizedAwsResources(cleanRegion);
     const cloudResources: CloudResource[] = normalizedAws.map(r => ({
@@ -204,9 +179,9 @@ app.post('/api/cloud/aws/configure', async (req: Request, res: Response) => {
       anomaly_type: r.anomaly_type,
       created_at: new Date().toISOString()
     }));
-
+ 
     cloudService.replaceProviderResources('AWS', cloudResources);
-
+ 
     return res.json({
       success: true,
       message: `Successfully connected to AWS Account ${testResult.account} (${cleanRegion})`,
@@ -223,7 +198,7 @@ app.post('/api/cloud/aws/configure', async (req: Request, res: Response) => {
     });
   }
 });
-
+ 
 /*
  * GET /api/cloud/platforms
  *
@@ -232,7 +207,7 @@ app.post('/api/cloud/aws/configure', async (req: Request, res: Response) => {
 app.get('/api/cloud/platforms', (_req: Request, res: Response) => {
   res.json(getMultiCloudStatus());
 });
-
+ 
 /*
  * POST /api/cloud/sync-all
  *
@@ -255,7 +230,7 @@ app.post('/api/cloud/sync-all', async (_req: Request, res: Response) => {
     });
   }
 });
-
+ 
 /*
  * POST & GET /api/cloud/aws/sync
  *
@@ -269,7 +244,7 @@ const handleAwsSync = async (req: Request, res: Response) => {
       getNormalizedAwsResources(targetRegion),
       testAwsConnection(targetRegion)
     ]);
-
+ 
     const cloudResources: CloudResource[] = normalizedAws.map(r => ({
       id: r.id,
       name: r.name,
@@ -288,12 +263,12 @@ const handleAwsSync = async (req: Request, res: Response) => {
       anomaly_type: r.anomaly_type,
       created_at: new Date().toISOString()
     }));
-
+ 
     // Replace previous AWS instances with live AWS instances
     cloudService.replaceProviderResources('AWS', cloudResources);
-
+ 
     console.log(`[CloudWise-AI] Successfully synchronized ${cloudResources.length} live AWS EC2 instances in ${targetRegion}.`);
-
+ 
     return res.json({
       success: true,
       provider: 'AWS',
@@ -315,10 +290,10 @@ const handleAwsSync = async (req: Request, res: Response) => {
     });
   }
 };
-
+ 
 app.post('/api/cloud/aws/sync', handleAwsSync);
 app.get('/api/cloud/aws/sync', handleAwsSync);
-
+ 
 /*
  * POST /api/cloud/reset-mock
  *
@@ -332,208 +307,112 @@ app.post('/api/cloud/reset-mock', (_req: Request, res: Response) => {
     resources: cloudService.getAllResources()
   });
 });
-
+ 
 /*
  * GET /api/cloud/aws/live
  *
- * Retrieves real AWS EC2 resources,
- * fetches CloudWatch CPU metrics,
- * normalizes the AWS data into the
- * common CloudWise format,
+ * Retrieves real AWS EC2 resources, fetches CloudWatch CPU metrics,
+ * normalizes the AWS data into the common CloudWise format,
  * and returns it as JSON.
  */
 app.get(
   '/api/cloud/aws/live',
   async (_req: Request, res: Response) => {
-
     try {
-
-      const resources =
-        await getNormalizedAwsResources();
-
-
+      const resources = await getNormalizedAwsResources();
+ 
       return res.json({
-
         provider: 'AWS',
-
         source: 'live',
-
         count: resources.length,
-
         resources
       });
-
     } catch (error: any) {
-
-      console.error(
-        'Failed to retrieve live AWS resources:',
-        error
-      );
-
-
+      console.error('Failed to retrieve live AWS resources:', error);
+ 
       return res.status(500).json({
-
-        error:
-          'Failed to retrieve live AWS resources',
-
-        details:
-          error?.message ??
-          'Unknown AWS error'
+        error: 'Failed to retrieve live AWS resources',
+        details: error?.message ?? 'Unknown AWS error'
       });
     }
   }
 );
-
-
+ 
+ 
 // -------------------------------------------------------------
 // Cloud Resources CRUD Endpoints
+// (changes are mirrored to SQL Server through dbClient)
 // -------------------------------------------------------------
-
-
-/*
- * Currently returns the existing
- * seeded/mock multi-cloud resources.
- *
- * Later we will integrate real AWS,
- * Azure and GCP collectors here.
- */
+ 
+ 
 app.get(
   '/api/cloud/resources',
   (_req: Request, res: Response) => {
-
-    res.json(
-      cloudService.getAllResources()
-    );
+    res.json(cloudService.getAllResources());
   }
 );
-
-
+ 
+ 
 app.get(
   '/api/cloud/resources/:name',
   (req: Request, res: Response) => {
-
     const name =
       Array.isArray(req.params.name)
         ? req.params.name[0]
         : req.params.name;
-
-
-    const resource =
-      cloudService.getResourceByName(
-        name
-      );
-
-
+ 
+    const resource = cloudService.getResourceByName(name);
+ 
     if (!resource) {
-
-      return res.status(404).json({
-        error: 'Resource not found'
-      });
+      return res.status(404).json({ error: 'Resource not found' });
     }
-
-
+ 
     return res.json(resource);
   }
 );
-
-
+ 
+ 
+// POST: create a resource and save it to the database
 app.post(
   '/api/cloud/resources',
-  (req: Request, res: Response) => {
-
-    const body =
-      req.body;
-
-
+  async (req: Request, res: Response) => {
+    const body = req.body;
+ 
     if (
       !body.name ||
       !body.provider ||
       !body.resource_type ||
       !body.region
     ) {
-
       return res.status(400).json({
-
-        error:
-          'Missing required fields (name, provider, resource_type, region)'
+        error: 'Missing required fields (name, provider, resource_type, region)'
       });
     }
-
-
-    const created =
-      cloudService.addResource({
-
-        name:
-          body.name,
-
-        provider:
-          body.provider,
-
-        resource_type:
-          body.resource_type,
-
-        region:
-          body.region,
-
-        status:
-          body.status ||
-          'running',
-
-        instance_type:
-          body.instance_type ||
-          'standard-tier',
-
-        cpu_utilization:
-          Number(
-            body.cpu_utilization ??
-            45
-          ),
-
-        memory_utilization:
-          Number(
-            body.memory_utilization ??
-            50
-          ),
-
-        storage_utilization:
-          Number(
-            body.storage_utilization ??
-            40
-          ),
-
-        network_in_mb:
-          Number(
-            body.network_in_mb ??
-            300
-          ),
-
-        network_out_mb:
-          Number(
-            body.network_out_mb ??
-            250
-          ),
-
-        cost_usd:
-          Number(
-            body.cost_usd ??
-            0.20
-          ),
-
-        monthly_cost:
-          Number(
-            body.monthly_cost ??
-            144
-          )
-      });
-
-
-    return res
-      .status(201)
-      .json(created);
+ 
+    const created = cloudService.addResource({
+      name: body.name,
+      provider: body.provider,
+      resource_type: body.resource_type,
+      region: body.region,
+      status: body.status || 'running',
+      instance_type: body.instance_type || 'standard-tier',
+      cpu_utilization: Number(body.cpu_utilization ?? 45),
+      memory_utilization: Number(body.memory_utilization ?? 50),
+      storage_utilization: Number(body.storage_utilization ?? 40),
+      network_in_mb: Number(body.network_in_mb ?? 300),
+      network_out_mb: Number(body.network_out_mb ?? 250),
+      cost_usd: Number(body.cost_usd ?? 0.20),
+      monthly_cost: Number(body.monthly_cost ?? 144)
+    });
+ 
+    await dbClient.create(created);
+ 
+    return res.status(201).json(created);
   }
 );
-
-
+ 
+ 
+// PATCH: update a resource (live AWS start/stop supported) and save to the database
 app.patch(
   '/api/cloud/resources/:id',
   async (req: Request, res: Response) => {
@@ -541,16 +420,14 @@ app.patch(
       Array.isArray(req.params.id)
         ? req.params.id[0]
         : req.params.id;
-
+ 
     const existing = cloudService.getResourceByIdOrName(id);
     if (!existing) {
-      return res.status(404).json({
-        error: 'Resource not found'
-      });
+      return res.status(404).json({ error: 'Resource not found' });
     }
-
+ 
     let awsStateResult: any = null;
-
+ 
     // Check if this is a live AWS EC2 instance (id starts with 'i-')
     if (existing.provider === 'AWS' && req.body.status && req.body.status !== existing.status) {
       const targetState = req.body.status;
@@ -579,27 +456,28 @@ app.patch(
         }
       }
     }
-
-    const updated =
-      cloudService.updateResource(
-        id,
-        req.body
-      );
-
+ 
+    const updated = cloudService.updateResource(id, req.body);
+ 
     if (!updated) {
-      return res.status(404).json({
-        error: 'Resource not found'
-      });
+      return res.status(404).json({ error: 'Resource not found' });
     }
-
+ 
+    await dbClient.update(updated.id, {
+      ...req.body,
+      cost_usd: updated.cost_usd,
+      monthly_cost: updated.monthly_cost
+    });
+ 
     return res.json({
       ...updated,
       awsState: awsStateResult
     });
   }
 );
-
-
+ 
+ 
+// DELETE: remove a resource and delete it from the database
 app.delete(
   '/api/cloud/resources/:id',
   async (req: Request, res: Response) => {
@@ -607,14 +485,12 @@ app.delete(
       Array.isArray(req.params.id)
         ? req.params.id[0]
         : req.params.id;
-
+ 
     const existing = cloudService.getResourceByIdOrName(id);
     if (!existing) {
-      return res.status(404).json({
-        error: 'Resource not found'
-      });
+      return res.status(404).json({ error: 'Resource not found' });
     }
-
+ 
     // Optional termination on AWS if explicitly requested
     if (existing.provider === 'AWS' && existing.id.startsWith('i-') && req.query.terminateOnAws === 'true') {
       try {
@@ -626,781 +502,359 @@ app.delete(
         });
       }
     }
-
-    const success =
-      cloudService.deleteResource(id);
-
+ 
+    const success = cloudService.deleteResource(id);
+ 
     if (!success) {
-      return res.status(404).json({
-        error: 'Resource not found'
-      });
+      return res.status(404).json({ error: 'Resource not found' });
     }
-
+ 
+    await dbClient.remove(existing.id);
+ 
     return res.json({
       message: 'Resource deleted successfully',
       id
     });
   }
 );
-
-
+ 
+ 
 // -------------------------------------------------------------
 // AI Engine Handlers
 // Mounted on both /ai/* and /api/ai/*
 // -------------------------------------------------------------
-
-
-const handleAnomalies =
-  (
-    req: Request,
-    res: Response
-  ) => {
-
-    try {
-
-      const metrics:
-        MetricData[] =
-          req.body?.metrics ||
-          cloudService
-            .getAsMetricDataList();
-
-
-      const contamination =
-        req.body?.contamination !==
-        undefined
-          ? Number(
-              req.body.contamination
-            )
-          : 0.05;
-
-
-      const result =
-        detectCpuAnomalies(
-          metrics,
-          contamination
-        );
-
-
-      const anomalies =
-        result.filter(
-          item =>
-            item.anomaly
-        );
-
-
-      res.json({
-
-        anomalies,
-
-        total_evaluated:
-          result.length,
-
-        count:
-          anomalies.length
-      });
-
-    } catch (err: any) {
-
-      res.status(400).json({
-
-        error:
-          err.message ||
-          'Failed to detect anomalies'
-      });
-    }
-  };
-
-
-const handleForecast =
-  (
-    req: Request,
-    res: Response
-  ) => {
-
-    try {
-
-      const provider =
-        req.query.provider as string ||
-        req.body?.provider;
-
-
-      const costs:
-        CostData[] =
-          req.body?.costs &&
-          req.body.costs.length > 0
-            ? req.body.costs
-            : cloudService
-                .getHistoricalCosts(
-                  provider
-                );
-
-
-      const periods =
-        req.body?.periods !==
-        undefined
-          ? Number(
-              req.body.periods
-            )
-          : 3;
-
-
-      const forecast =
-        forecastCost(
-          costs,
-          periods
-        );
-
-
-      res.json({
-        forecast,
-        periods
-      });
-
-    } catch (err: any) {
-
-      res.status(400).json({
-
-        error:
-          err.message ||
-          'Failed to generate forecast'
-      });
-    }
-  };
-
-
-const handleRecommendations =
-  (
-    req: Request,
-    res: Response
-  ) => {
-
-    try {
-
-      const resources:
-        ResourceData[] =
-          req.body?.resources &&
-          req.body.resources.length > 0
-            ? req.body.resources
-            : cloudService
-                .getAsResourceDataList();
-
-
-      const recommendations =
-        generateRecommendations(
-          resources
-        );
-
-
-      res.json({
-
-        recommendations,
-
-        count:
-          recommendations.length
-      });
-
-    } catch (err: any) {
-
-      res.status(400).json({
-
-        error:
-          err.message ||
-          'Failed to generate recommendations'
-      });
-    }
-  };
-
-
-const handleAnalyze =
-  (
-    req: Request,
-    res: Response
-  ) => {
-
-    try {
-
-      const contamination =
-        req.body?.contamination !==
-        undefined
-          ? Number(
-              req.body.contamination
-            )
-          : 0.05;
-
-
-      const periods =
-        req.body?.forecast_periods !==
-        undefined
-          ? Number(
-              req.body.forecast_periods
-            )
-          : 3;
-
-
-      const metrics:
-        MetricData[] =
-          req.body?.metrics &&
-          req.body.metrics.length > 0
-            ? req.body.metrics
-            : cloudService
-                .getAsMetricDataList();
-
-
-      const costs:
-        CostData[] =
-          req.body?.costs &&
-          req.body.costs.length > 0
-            ? req.body.costs
-            : cloudService
-                .getHistoricalCosts();
-
-
-      const resources:
-        ResourceData[] =
-          req.body?.resources &&
-          req.body.resources.length > 0
-            ? req.body.resources
-            : cloudService
-                .getAsResourceDataList();
-
-
-      const allMetricsResult =
-        detectCpuAnomalies(
-          metrics,
-          contamination
-        );
-
-
-      const anomalies =
-        allMetricsResult.filter(
-          item =>
-            item.anomaly
-        );
-
-
-      const forecast =
-        forecastCost(
-          costs,
-          periods
-        );
-
-
-      const recommendations =
-        generateRecommendations(
-          resources
-        );
-
-
-      const response:
-        AnalysisResponse = {
-
-          anomalies,
-
-          forecast,
-
-          recommendations
-        };
-
-
-      res.json(response);
-
-    } catch (err: any) {
-
-      res.status(400).json({
-
-        error:
-          err.message ||
-          'Analysis pipeline failed'
-      });
-    }
-  };
-
-
+ 
+ 
+const handleAnomalies = (req: Request, res: Response) => {
+  try {
+    const metrics: MetricData[] =
+      req.body?.metrics || cloudService.getAsMetricDataList();
+ 
+    const contamination =
+      req.body?.contamination !== undefined
+        ? Number(req.body.contamination)
+        : 0.05;
+ 
+    const result = detectCpuAnomalies(metrics, contamination);
+ 
+    const anomalies = result.filter(item => item.anomaly);
+ 
+    res.json({
+      anomalies,
+      total_evaluated: result.length,
+      count: anomalies.length
+    });
+  } catch (err: any) {
+    res.status(400).json({
+      error: err.message || 'Failed to detect anomalies'
+    });
+  }
+};
+ 
+ 
+const handleForecast = (req: Request, res: Response) => {
+  try {
+    const provider =
+      req.query.provider as string ||
+      req.body?.provider;
+ 
+    const costs: CostData[] =
+      req.body?.costs && req.body.costs.length > 0
+        ? req.body.costs
+        : cloudService.getHistoricalCosts(provider);
+ 
+    const periods =
+      req.body?.periods !== undefined
+        ? Number(req.body.periods)
+        : 3;
+ 
+    const forecast = forecastCost(costs, periods);
+ 
+    res.json({ forecast, periods });
+  } catch (err: any) {
+    res.status(400).json({
+      error: err.message || 'Failed to generate forecast'
+    });
+  }
+};
+ 
+ 
+const handleRecommendations = (req: Request, res: Response) => {
+  try {
+    const resources: ResourceData[] =
+      req.body?.resources && req.body.resources.length > 0
+        ? req.body.resources
+        : cloudService.getAsResourceDataList();
+ 
+    const recommendations = generateRecommendations(resources);
+ 
+    res.json({
+      recommendations,
+      count: recommendations.length
+    });
+  } catch (err: any) {
+    res.status(400).json({
+      error: err.message || 'Failed to generate recommendations'
+    });
+  }
+};
+ 
+ 
+const handleAnalyze = (req: Request, res: Response) => {
+  try {
+    const contamination =
+      req.body?.contamination !== undefined
+        ? Number(req.body.contamination)
+        : 0.05;
+ 
+    const periods =
+      req.body?.forecast_periods !== undefined
+        ? Number(req.body.forecast_periods)
+        : 3;
+ 
+    const metrics: MetricData[] =
+      req.body?.metrics && req.body.metrics.length > 0
+        ? req.body.metrics
+        : cloudService.getAsMetricDataList();
+ 
+    const costs: CostData[] =
+      req.body?.costs && req.body.costs.length > 0
+        ? req.body.costs
+        : cloudService.getHistoricalCosts();
+ 
+    const resources: ResourceData[] =
+      req.body?.resources && req.body.resources.length > 0
+        ? req.body.resources
+        : cloudService.getAsResourceDataList();
+ 
+    const allMetricsResult = detectCpuAnomalies(metrics, contamination);
+ 
+    const anomalies = allMetricsResult.filter(item => item.anomaly);
+ 
+    const forecast = forecastCost(costs, periods);
+ 
+    const recommendations = generateRecommendations(resources);
+ 
+    const response: AnalysisResponse = {
+      anomalies,
+      forecast,
+      recommendations
+    };
+ 
+    res.json(response);
+  } catch (err: any) {
+    res.status(400).json({
+      error: err.message || 'Analysis pipeline failed'
+    });
+  }
+};
+ 
+ 
 // -------------------------------------------------------------
 // Mount AI Handlers
 // -------------------------------------------------------------
-
-
-app.post(
-  '/ai/anomalies',
-  handleAnomalies
-);
-
-app.post(
-  '/api/ai/anomalies',
-  handleAnomalies
-);
-
-
-app.post(
-  '/ai/forecast',
-  handleForecast
-);
-
-app.post(
-  '/api/ai/forecast',
-  handleForecast
-);
-
-
-app.post(
-  '/ai/recommendations',
-  handleRecommendations
-);
-
-app.post(
-  '/api/ai/recommendations',
-  handleRecommendations
-);
-
-
-app.post(
-  '/ai/analyze',
-  handleAnalyze
-);
-
-app.post(
-  '/api/ai/analyze',
-  handleAnalyze
-);
-
-
+ 
+ 
+app.post('/ai/anomalies', handleAnomalies);
+app.post('/api/ai/anomalies', handleAnomalies);
+ 
+app.post('/ai/forecast', handleForecast);
+app.post('/api/ai/forecast', handleForecast);
+ 
+app.post('/ai/recommendations', handleRecommendations);
+app.post('/api/ai/recommendations', handleRecommendations);
+ 
+app.post('/ai/analyze', handleAnalyze);
+app.post('/api/ai/analyze', handleAnalyze);
+ 
+ 
 // -------------------------------------------------------------
 // Overview KPI Aggregations
 // -------------------------------------------------------------
-
-
+ 
+ 
 app.get(
   '/api/ai/overview',
   (_req: Request, res: Response) => {
-
-    const allResources =
-      cloudService
-        .getAllResources();
-
-
-    const metricDataList =
-      cloudService
-        .getAsMetricDataList();
-
-
-    const anomaliesResult =
-      detectCpuAnomalies(
-        metricDataList
-      );
-
-
-    const activeAnomalies =
-      anomaliesResult.filter(
-        a =>
-          a.anomaly
-      );
-
-
-    const resourceDataList =
-      cloudService
-        .getAsResourceDataList();
-
-
-    const recommendations =
-      generateRecommendations(
-        resourceDataList
-      );
-
-
-    const totalMonthlySpend =
-      allResources.reduce(
-        (
-          acc,
-          r
-        ) =>
-          acc +
-          (
-            r.monthly_cost ||
-            0
-          ),
-        0
-      );
-
-
-    const totalPredictedSavings =
-      recommendations.reduce(
-        (
-          acc,
-          rec
-        ) =>
-          acc +
-          (
-            rec
-              .estimated_saving_usd ||
-            0
-          ),
-        0
-      );
-
-
-    const highPriority =
-      recommendations.filter(
-        r =>
-          r.priority ===
-          'HIGH'
-      ).length;
-
-
+ 
+    const allResources = cloudService.getAllResources();
+ 
+    const metricDataList = cloudService.getAsMetricDataList();
+ 
+    const anomaliesResult = detectCpuAnomalies(metricDataList);
+ 
+    const activeAnomalies = anomaliesResult.filter(a => a.anomaly);
+ 
+    const resourceDataList = cloudService.getAsResourceDataList();
+ 
+    const recommendations = generateRecommendations(resourceDataList);
+ 
+    const totalMonthlySpend = allResources.reduce(
+      (acc, r) => acc + (r.monthly_cost || 0),
+      0
+    );
+ 
+    const totalPredictedSavings = recommendations.reduce(
+      (acc, rec) => acc + (rec.estimated_saving_usd || 0),
+      0
+    );
+ 
+    const highPriority = recommendations.filter(
+      r => r.priority === 'HIGH'
+    ).length;
+ 
     const spendByCloud = {
-
       AWS: 0,
-
       Azure: 0,
-
       GCP: 0
     };
-
-
-    const spendByTypeMap =
-      new Map<
-        string,
-        number
-      >();
-
-
-    for (
-      const r
-      of allResources
-    ) {
-
-      if (
-        r.provider === 'AWS'
-      ) {
-
-        spendByCloud.AWS +=
-          r.monthly_cost ||
-          0;
-
-      } else if (
-        r.provider === 'Azure'
-      ) {
-
-        spendByCloud.Azure +=
-          r.monthly_cost ||
-          0;
-
-      } else if (
-        r.provider === 'GCP'
-      ) {
-
-        spendByCloud.GCP +=
-          r.monthly_cost ||
-          0;
+ 
+    const spendByTypeMap = new Map<string, number>();
+ 
+    for (const r of allResources) {
+      if (r.provider === 'AWS') {
+        spendByCloud.AWS += r.monthly_cost || 0;
+      } else if (r.provider === 'Azure') {
+        spendByCloud.Azure += r.monthly_cost || 0;
+      } else if (r.provider === 'GCP') {
+        spendByCloud.GCP += r.monthly_cost || 0;
       }
-
-
-      const currentTypeSpend =
-        spendByTypeMap.get(
-          r.resource_type
-        ) || 0;
-
-
+ 
+      const currentTypeSpend = spendByTypeMap.get(r.resource_type) || 0;
+ 
       spendByTypeMap.set(
         r.resource_type,
-
-        currentTypeSpend +
-        (
-          r.monthly_cost ||
-          0
-        )
+        currentTypeSpend + (r.monthly_cost || 0)
       );
     }
-
-
-    const resourceTypeSpend =
-      Array.from(
-        spendByTypeMap.entries()
-      )
-
-        .map(
-          (
-            [
-              type,
-              amount
-            ]
-          ) => ({
-
-            type,
-
-            amount:
-              Math.round(
-                amount *
-                100
-              ) /
-              100,
-
-            percentage:
-              totalMonthlySpend > 0
-                ? Math.round(
-                    (
-                      amount /
-                      totalMonthlySpend
-                    ) *
-                    100
-                  )
-                : 0
-          })
-        )
-
-        .sort(
-          (
-            a,
-            b
-          ) =>
-            b.amount -
-            a.amount
-        );
-
-
-    const costs =
-      cloudService
-        .getHistoricalCosts();
-
-
-    const forecast1Period =
-      forecastCost(
-        costs,
-        1
-      );
-
-
-    const forecastNextMonth =
-      forecast1Period[0]
-        ?.predicted_cost ||
-      totalMonthlySpend *
-        1.03;
-
-
-    const overview:
-      DashboardOverview = {
-
-        totalMonthlySpend:
-          Math.round(
-            totalMonthlySpend *
-            100
-          ) /
-          100,
-
-        totalPredictedSavings:
-          Math.round(
-            totalPredictedSavings *
-            100
-          ) /
-          100,
-
-        totalResourcesCount:
-          allResources.length,
-
-        runningResourcesCount:
-          allResources.filter(
-            r =>
-              r.status ===
-              'running'
-          ).length,
-
-        stoppedResourcesCount:
-          allResources.filter(
-            r =>
-              r.status ===
-              'stopped'
-          ).length,
-
-        activeAnomaliesCount:
-          activeAnomalies.length,
-
-        highPriorityRecommendationsCount:
-          highPriority,
-
-        forecastNextMonth:
-          Math.round(
-            forecastNextMonth *
-            100
-          ) /
-          100,
-
-        spendDeltaPercent:
-          3.4,
-
-        savingsDeltaPercent:
+ 
+    const resourceTypeSpend = Array.from(spendByTypeMap.entries())
+      .map(([type, amount]) => ({
+        type,
+        amount: Math.round(amount * 100) / 100,
+        percentage:
           totalMonthlySpend > 0
-            ? Math.round(
-                (
-                  totalPredictedSavings /
-                  totalMonthlySpend
-                ) *
-                1000
-              ) /
-              10
-            : 0,
-
-        cloudSpendBreakdown: {
-
-          AWS:
-            Math.round(
-              spendByCloud.AWS *
-              100
-            ) /
-            100,
-
-          Azure:
-            Math.round(
-              spendByCloud.Azure *
-              100
-            ) /
-            100,
-
-          GCP:
-            Math.round(
-              spendByCloud.GCP *
-              100
-            ) /
-            100
-        },
-
-        resourceTypeSpend
-      };
-
-
-    res.json(
-      overview
-    );
+            ? Math.round((amount / totalMonthlySpend) * 100)
+            : 0
+      }))
+      .sort((a, b) => b.amount - a.amount);
+ 
+    const costs = cloudService.getHistoricalCosts();
+ 
+    const forecast1Period = forecastCost(costs, 1);
+ 
+    const forecastNextMonth =
+      forecast1Period[0]?.predicted_cost ||
+      totalMonthlySpend * 1.03;
+ 
+    const overview: DashboardOverview = {
+      totalMonthlySpend: Math.round(totalMonthlySpend * 100) / 100,
+ 
+      totalPredictedSavings: Math.round(totalPredictedSavings * 100) / 100,
+ 
+      totalResourcesCount: allResources.length,
+ 
+      runningResourcesCount: allResources.filter(
+        r => r.status === 'running'
+      ).length,
+ 
+      stoppedResourcesCount: allResources.filter(
+        r => r.status === 'stopped'
+      ).length,
+ 
+      activeAnomaliesCount: activeAnomalies.length,
+ 
+      highPriorityRecommendationsCount: highPriority,
+ 
+      forecastNextMonth: Math.round(forecastNextMonth * 100) / 100,
+ 
+      spendDeltaPercent: 3.4,
+ 
+      savingsDeltaPercent:
+        totalMonthlySpend > 0
+          ? Math.round((totalPredictedSavings / totalMonthlySpend) * 1000) / 10
+          : 0,
+ 
+      cloudSpendBreakdown: {
+        AWS: Math.round(spendByCloud.AWS * 100) / 100,
+        Azure: Math.round(spendByCloud.Azure * 100) / 100,
+        GCP: Math.round(spendByCloud.GCP * 100) / 100
+      },
+ 
+      resourceTypeSpend
+    };
+ 
+    res.json(overview);
   }
 );
-
-
+ 
+ 
 // -------------------------------------------------------------
 // Dataset Endpoints
 // -------------------------------------------------------------
-
-
+ 
+ 
 app.get(
   '/api/ai/dataset/costs',
-  (
-    req: Request,
-    res: Response
-  ) => {
-
-const provider = req.query.provider as string | undefined;
-
-
-    res.json(
-      cloudService
-        .getHistoricalCosts(
-          provider
-        )
-    );
+  (req: Request, res: Response) => {
+    const provider = req.query.provider as string | undefined;
+ 
+    res.json(cloudService.getHistoricalCosts(provider));
   }
 );
-
-
+ 
+ 
 app.get(
   '/api/ai/dataset/metrics',
-  (
-    _req: Request,
-    res: Response
-  ) => {
-
-    const metricDataList =
-      cloudService
-        .getAsMetricDataList();
-
-
-    const anomalies =
-      detectCpuAnomalies(
-        metricDataList
-      );
-
-
-    res.json(
-      anomalies
-    );
+  (_req: Request, res: Response) => {
+    const metricDataList = cloudService.getAsMetricDataList();
+ 
+    const anomalies = detectCpuAnomalies(metricDataList);
+ 
+    res.json(anomalies);
   }
 );
-
-
+ 
+ 
 // -------------------------------------------------------------
 // Frontend Integration
 // Vite in development, static files in production
 // -------------------------------------------------------------
-
-
+ 
+ 
 async function startServer() {
-
-  const isProduction =
-    process.env.NODE_ENV ===
-    'production';
-
-
+ 
+  // Load saved resources from SQL Server before serving requests
+  await cloudService.loadFromDb();
+ 
+  const isProduction = process.env.NODE_ENV === 'production';
+ 
+ 
   if (!isProduction) {
-
-    const {
-      createServer:
-        createViteServer
-    } =
-      await import(
-        'vite'
-      );
-
-
-    const vite =
-      await createViteServer({
-
-        server: {
-          middlewareMode:
-            true
-        },
-
-        appType:
-          'spa'
-      });
-
-
-    app.use(
-      vite.middlewares
-    );
-
+ 
+    const { createServer: createViteServer } = await import('vite');
+ 
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa'
+    });
+ 
+    app.use(vite.middlewares);
+ 
   } else {
-
-    const distPath =
-      path.resolve(
-        __dirname,
-        'dist'
-      );
-
-
-    app.use(
-      express.static(
-        distPath
-      )
-    );
-
-
-    app.get(
-      '*',
-      (
-        _req: Request,
-        res: Response
-      ) => {
-
-        res.sendFile(
-          path.join(
-            distPath,
-            'index.html'
-          )
-        );
-      }
-    );
+ 
+    const distPath = path.resolve(__dirname, 'dist');
+ 
+    app.use(express.static(distPath));
+ 
+    app.get('*', (_req: Request, res: Response) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
-
-
+ 
+ 
   // Error handling middleware
-
+ 
   app.use(
     (
       err: any,
@@ -1408,36 +862,25 @@ async function startServer() {
       res: Response,
       _next: NextFunction
     ) => {
-
-      console.error(
-        'Unhandled server exception:',
-        err
-      );
-
-
-      res
-        .status(500)
-        .json({
-
-          error:
-            'Internal server error',
-
-          details:
-            err?.message
-        });
+      console.error('Unhandled server exception:', err);
+ 
+      res.status(500).json({
+        error: 'Internal server error',
+        details: err?.message
+      });
     }
   );
-
-
+ 
+ 
   app.listen(
     PORT,
     '0.0.0.0',
     () => {
-
+ 
       console.log(
         `CloudWise-AI full-stack server running on http://0.0.0.0:${PORT}`
       );
-
+ 
       // Attempt automatic live AWS sync if credentials are configured
       if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
         console.log(`[CloudWise-AI] AWS credentials detected in environment. Attempting initial sync in ${process.env.AWS_REGION || 'ap-south-1'}...`);
@@ -1475,16 +918,12 @@ async function startServer() {
     }
   );
 }
-
-
+ 
+ 
 startServer().catch(
   err => {
-
-    console.error(
-      'Fatal initialization error:',
-      err
-    );
-
+    console.error('Fatal initialization error:', err);
     process.exit(1);
   }
 );
+ 
