@@ -1,7 +1,7 @@
 
 import "dotenv/config";
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -135,8 +135,8 @@ Explain the action associated with the existing recommendation.
   maxOutputTokens: 500,
   temperature: 0.2,
   thinkingConfig: {
-    thinkingLevel: "minimal"
-  },
+  thinkingLevel: ThinkingLevel.MINIMAL
+},
   httpOptions: {
     timeout: 30000
   }

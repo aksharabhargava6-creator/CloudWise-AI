@@ -16,6 +16,7 @@ import { cloudService } from './src/server/services/cloudService.js';
 import { detectCpuAnomalies } from './src/server/services/anomalyService.js';
 import { forecastCost } from './src/server/services/forecastService.js';
 import { generateRecommendations } from './src/server/services/recommendationService.js';
+import { explainRecommendation } from './src/server/services/genaiService.js';
 import { dbClient } from './src/server/services/dbClient.js';
  
 /*
@@ -600,6 +601,58 @@ const handleRecommendations = (req: Request, res: Response) => {
 };
  
  
+const handleExplainRecommendation =
+  async (
+    req: Request,
+    res: Response
+  ) => {
+
+    try {
+
+      const recommendation =
+        req.body;
+
+      if (
+        !recommendation ||
+        !recommendation.resource_id ||
+        !recommendation.recommendation ||
+        !recommendation.reason ||
+        !recommendation.priority
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Invalid recommendation data'
+        });
+      }
+
+      const explanation =
+        await explainRecommendation(
+          recommendation
+        );
+
+      return res.json({
+
+        explanation
+      });
+
+    } catch (err: any) {
+
+      console.error(
+        'Failed to generate AI explanation:',
+        err
+      );
+
+      return res.status(500).json({
+
+        error:
+          'Failed to generate AI explanation'
+      });
+    }
+  };
+
+
 const handleAnalyze = (req: Request, res: Response) => {
   try {
     const contamination =
@@ -664,6 +717,7 @@ app.post('/api/ai/forecast', handleForecast);
 app.post('/ai/recommendations', handleRecommendations);
 app.post('/api/ai/recommendations', handleRecommendations);
  
+app.post('/api/ai/explain', handleExplainRecommendation);
 app.post('/ai/analyze', handleAnalyze);
 app.post('/api/ai/analyze', handleAnalyze);
  
