@@ -1,18 +1,5 @@
 
-/
 
-
-
-
-
-
-
-
-
-
-
-
-Readme · MD
 # CloudWise-AI
  
 > **Multi-Cloud Resource Intelligence, Anomaly Detection & Automated Cost Optimization Platform**
