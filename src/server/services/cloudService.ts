@@ -1,4 +1,5 @@
 import { CloudResource, MetricData, CostData, ResourceData, DashboardOverview } from '../../types/cloudwise.js';
+import { dbClient } from './dbClient.js';
 
 const initialResourcesStore: CloudResource[] = [
   // 1. AWS EC2 - high_cpu_and_traffic anomaly
@@ -504,6 +505,19 @@ export const historicalCosts: CostData[] = [
 ];
 
 export const cloudService = {
+
+  async loadFromDb(): Promise<void> {
+    const rows = await dbClient.list();
+    if (rows === null) {
+      console.warn('[CloudWise-AI] Database API unreachable - using built-in sample data (changes will not be saved).');
+      return;
+    }
+    if (rows.length > 0) {
+      resourcesStore = rows;
+      console.log(`[CloudWise-AI] Loaded ${rows.length} resources from database.`);
+    }
+  },
+
   getAllResources(): CloudResource[] {
     return [...resourcesStore];
   },
