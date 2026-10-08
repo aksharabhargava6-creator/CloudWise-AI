@@ -1,4 +1,4 @@
-name: CloudWise CI
+name: CloudWise CI + DevSecOps
 
 on:
   push:
@@ -10,6 +10,68 @@ on:
       - main
 
 jobs:
+
+  # -------------------------
+  # 1. SECRET SCANNING
+  # -------------------------
+  secret-scan:
+    name: Secret Scan - Gitleaks
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  # -------------------------
+  # 2. DEPENDENCY SCANNING
+  # -------------------------
+  dependency-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Node.js dependencies
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+
+      # Python dependencies
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit -r backend/requirements.txt
+
+
+  # -------------------------
+  # 3. DOCKER BUILD
+  # -------------------------
   docker-build:
     name: Build Docker Images
     runs-on: ubuntu-latest
@@ -23,3 +85,40 @@ jobs:
 
       - name: Build frontend image
         run: docker build -t cloudwise-frontend .
+
+
+  # -------------------------
+  # 4. DOCKER SECURITY SCAN
+  # -------------------------
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    needs: docker-build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t cloudwise-backend ./backend
+
+      - name: Build frontend image
+        run: docker build -t cloudwise-frontend .
+
+      - name: Scan backend image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cloudwise-backend:latest
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Scan frontend image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cloudwise-frontend:latest
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
