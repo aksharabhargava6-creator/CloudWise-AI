@@ -22,29 +22,63 @@ import {
   NormalizedCloudResource
 } from "./cloudNormalizer.js";
 
+import {
+  getNormalizedS3Resources
+} from "./s3Collector.js";
+
+import {
+  getNormalizedLambdaResources
+} from "./lambdaCollector.js";
+
+import {
+  getNormalizedDynamoDbResources
+} from "./dynamodbCollector.js";
+
 
 function cleanEnvVal(val?: string): string | undefined {
   if (!val) return undefined;
-  const trimmed = val.trim().replace(/^["']|["']$/g, '');
-  return trimmed.length > 0 ? trimmed : undefined;
+
+  const trimmed = val
+    .trim()
+    .replace(/^["']|["']$/g, '');
+
+  return trimmed.length > 0
+    ? trimmed
+    : undefined;
 }
 
+
 function getAwsClientConfig(regionOverride?: string) {
-  const region = cleanEnvVal(regionOverride) || cleanEnvVal(process.env.AWS_REGION) || "ap-south-1";
-  const accessKeyId = cleanEnvVal(process.env.AWS_ACCESS_KEY_ID);
-  const secretAccessKey = cleanEnvVal(process.env.AWS_SECRET_ACCESS_KEY);
-  let sessionToken = cleanEnvVal(process.env.AWS_SESSION_TOKEN);
+  const region =
+    cleanEnvVal(regionOverride) ||
+    cleanEnvVal(process.env.AWS_REGION) ||
+    "ap-south-1";
+
+  const accessKeyId =
+    cleanEnvVal(process.env.AWS_ACCESS_KEY_ID);
+
+  const secretAccessKey =
+    cleanEnvVal(process.env.AWS_SECRET_ACCESS_KEY);
+
+  const sessionToken =
+    cleanEnvVal(process.env.AWS_SESSION_TOKEN);
 
   if (accessKeyId && secretAccessKey) {
-    const credentials: { accessKeyId: string; secretAccessKey: string; sessionToken?: string } = {
+    const credentials: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      sessionToken?: string;
+    } = {
       accessKeyId,
       secretAccessKey
     };
 
-    // Temporary session keys starting with ASIA require sessionToken
-    // Permanent IAM keys starting with AKIA must NOT include sessionToken
-    if (sessionToken && !accessKeyId.startsWith('AKIA')) {
-      credentials.sessionToken = sessionToken;
+    if (
+      sessionToken &&
+      !accessKeyId.startsWith('AKIA')
+    ) {
+      credentials.sessionToken =
+        sessionToken;
     }
 
     return {
@@ -52,8 +86,10 @@ function getAwsClientConfig(regionOverride?: string) {
       credentials
     };
   }
+
   return { region };
 }
+
 
 export interface AwsConnectionResult {
   connected: boolean;
@@ -64,19 +100,34 @@ export interface AwsConnectionResult {
   error?: string;
 }
 
+
 /*
  * ---------------------------------------------------------
  * 1. CLOUD CONNECTION TEST & STS IDENTITY
  * ---------------------------------------------------------
  */
 
-export async function testAwsConnection(regionOverride?: string): Promise<AwsConnectionResult> {
-  const config = getAwsClientConfig(regionOverride);
+export async function testAwsConnection(
+  regionOverride?: string
+): Promise<AwsConnectionResult> {
+
+  const config =
+    getAwsClientConfig(regionOverride);
+
   try {
-    // Use STS client with credentials
-    const stsClient = new STSClient(config);
-    const callerId = await stsClient.send(new GetCallerIdentityCommand({}));
-    console.log(`[CloudWise-AI] AWS STS connected: Account ${callerId.Account}, ARN: ${callerId.Arn}`);
+
+    const stsClient =
+      new STSClient(config);
+
+    const callerId =
+      await stsClient.send(
+        new GetCallerIdentityCommand({})
+      );
+
+    console.log(
+      `[CloudWise-AI] AWS STS connected: Account ${callerId.Account}, ARN: ${callerId.Arn}`
+    );
+
     return {
       connected: true,
       arn: callerId.Arn,
@@ -84,17 +135,50 @@ export async function testAwsConnection(regionOverride?: string): Promise<AwsCon
       userId: callerId.UserId,
       region: config.region
     };
-  } catch (error: any) {
-    console.error("[CloudWise-AI] AWS connection failed:", error);
 
-    // Provide friendly diagnostic guidance for common AWS errors
-    let errorMsg = error?.message || 'Failed to authenticate AWS IAM credentials';
-    if (errorMsg.includes('security token included in the request is invalid') || errorMsg.includes('InvalidClientTokenId')) {
-      errorMsg = 'Invalid AWS Access Key or Secret Key. Please verify that this Access Key ID exists and is Active in your AWS IAM Console, and that the Secret Access Key matches.';
-    } else if (errorMsg.includes('SignatureDoesNotMatch')) {
-      errorMsg = 'SignatureDoesNotMatch: Your Secret Access Key is incorrect or was mistyped in .env.';
-    } else if (errorMsg.includes('AuthFailure') || errorMsg.includes('validate the provided access credentials')) {
-      errorMsg = 'AuthFailure: AWS was not able to validate your credentials. Please double check that the Secret Access Key matches your Access Key, and that your AWS account is verified.';
+  } catch (error: any) {
+
+    console.error(
+      "[CloudWise-AI] AWS connection failed:",
+      error
+    );
+
+    let errorMsg =
+      error?.message ||
+      'Failed to authenticate AWS IAM credentials';
+
+    if (
+      errorMsg.includes(
+        'security token included in the request is invalid'
+      ) ||
+      errorMsg.includes(
+        'InvalidClientTokenId'
+      )
+    ) {
+
+      errorMsg =
+        'Invalid AWS Access Key or Secret Key. Please verify that this Access Key ID exists and is Active in your AWS IAM Console, and that the Secret Access Key matches.';
+
+    } else if (
+      errorMsg.includes(
+        'SignatureDoesNotMatch'
+      )
+    ) {
+
+      errorMsg =
+        'SignatureDoesNotMatch: Your Secret Access Key is incorrect or was mistyped in .env.';
+
+    } else if (
+      errorMsg.includes(
+        'AuthFailure'
+      ) ||
+      errorMsg.includes(
+        'validate the provided access credentials'
+      )
+    ) {
+
+      errorMsg =
+        'AuthFailure: AWS was not able to validate your credentials. Please double check that the Secret Access Key matches your Access Key, and that your AWS account is verified.';
     }
 
     return {
@@ -104,6 +188,7 @@ export async function testAwsConnection(regionOverride?: string): Promise<AwsCon
     };
   }
 }
+
 
 /*
  * ---------------------------------------------------------
@@ -115,7 +200,11 @@ export async function getEc2CpuUtilization(
   instanceId: string,
   regionOverride?: string
 ): Promise<number | null> {
-  const cloudWatchClient = new CloudWatchClient(getAwsClientConfig(regionOverride));
+
+  const cloudWatchClient =
+    new CloudWatchClient(
+      getAwsClientConfig(regionOverride)
+    );
 
   const endTime =
     new Date();
@@ -201,15 +290,28 @@ export async function getEc2CpuUtilization(
  * ---------------------------------------------------------
  */
 
-export async function getEc2Instances(regionOverride?: string): Promise<AwsEc2RawResource[]> {
-  const clientConfig = getAwsClientConfig(regionOverride);
-  const ec2Client = new EC2Client(clientConfig);
-  const currentRegion = clientConfig.region;
+export async function getEc2Instances(
+  regionOverride?: string
+): Promise<AwsEc2RawResource[]> {
 
-  const resources: AwsEc2RawResource[] = [];
+  const clientConfig =
+    getAwsClientConfig(regionOverride);
+
+  const ec2Client =
+    new EC2Client(clientConfig);
+
+  const currentRegion =
+    clientConfig.region;
+
+  const resources:
+    AwsEc2RawResource[] = [];
 
   try {
-    const response = await ec2Client.send(new DescribeInstancesCommand({}));
+
+    const response =
+      await ec2Client.send(
+        new DescribeInstancesCommand({})
+      );
 
     for (
       const reservation
@@ -301,17 +403,351 @@ export async function getEc2Instances(regionOverride?: string): Promise<AwsEc2Ra
   }
 }
 
+
 /*
  * ---------------------------------------------------------
- * 4. DATA NORMALIZATION
+ * 4. EC2 NORMALIZATION
+ * ---------------------------------------------------------
+ */
+
+export async function getNormalizedAwsEc2Resources(
+  regionOverride?: string
+): Promise<NormalizedCloudResource[]> {
+
+  const awsResources =
+    await getEc2Instances(
+      regionOverride
+    );
+
+  return awsResources.map(
+    resource =>
+      normalizeAwsEc2Resource(
+        resource
+      )
+  );
+}
+
+
+/*
+ * ---------------------------------------------------------
+ * 5. MULTI-SERVICE AWS INVENTORY
+ * ---------------------------------------------------------
+ *
+ * This function is intentionally used by the existing CloudWise
+ * server and multiCloudManager so we do not have to rewrite the
+ * whole application every time another AWS service is added.
+ *
+ * Current live services:
+ *   - EC2
+ *   - S3
+ *
+ * Next:
+ *   - Lambda
+ *   - DynamoDB
+ *   - EBS
+ *   - RDS
  * ---------------------------------------------------------
  */
 
 export async function getNormalizedAwsResources(
   regionOverride?: string
 ): Promise<NormalizedCloudResource[]> {
-  const awsResources = await getEc2Instances(regionOverride);
-  return awsResources.map(resource => normalizeAwsEc2Resource(resource));
+
+  /*
+   * Each AWS service is isolated with Promise.allSettled.
+   * If one AWS API fails temporarily, the remaining
+   * services can still be returned to CloudWise.
+   */
+  const [
+    ec2Result,
+    s3Result,
+    lambdaResult,
+    dynamoDbResult
+  ] =
+    await Promise.allSettled([
+
+      getNormalizedAwsEc2Resources(
+        regionOverride
+      ),
+
+      getNormalizedS3Resources(),
+
+      getNormalizedLambdaResources(
+        regionOverride
+      ),
+
+      getNormalizedDynamoDbResources(
+        regionOverride
+      )
+    ]);
+
+
+  const resources:
+    NormalizedCloudResource[] = [];
+
+
+  if (
+    ec2Result.status ===
+    'fulfilled'
+  ) {
+
+    resources.push(
+      ...ec2Result.value
+    );
+
+  } else {
+
+    console.error(
+      '[CloudWise-AI] EC2 collection failed:',
+      ec2Result.reason
+    );
+  }
+
+
+  if (
+    s3Result.status ===
+    'fulfilled'
+  ) {
+
+    resources.push(
+      ...s3Result.value
+    );
+
+  } else {
+
+    console.error(
+      '[CloudWise-AI] S3 collection failed:',
+      s3Result.reason
+    );
+  }
+
+
+  if (
+    lambdaResult.status ===
+    'fulfilled'
+  ) {
+
+    resources.push(
+      ...lambdaResult.value
+    );
+
+  } else {
+
+    console.error(
+      '[CloudWise-AI] Lambda collection failed:',
+      lambdaResult.reason
+    );
+  }
+
+
+  if (
+    dynamoDbResult.status ===
+    'fulfilled'
+  ) {
+
+    resources.push(
+      ...dynamoDbResult.value
+    );
+
+  } else {
+
+    console.error(
+      '[CloudWise-AI] DynamoDB collection failed:',
+      dynamoDbResult.reason
+    );
+  }
+
+
+  const ec2Count =
+    resources.filter(
+      resource =>
+        resource.resource_type ===
+        'EC2'
+    ).length;
+
+
+  const s3Count =
+    resources.filter(
+      resource =>
+        resource.resource_type ===
+        'S3'
+    ).length;
+
+
+  const lambdaCount =
+    resources.filter(
+      resource =>
+        resource.resource_type ===
+        'Lambda'
+    ).length;
+
+
+  const dynamoDbCount =
+    resources.filter(
+      resource =>
+        resource.resource_type ===
+        'DynamoDB'
+    ).length;
+
+
+  console.log(
+    `[CloudWise-AI] AWS inventory complete: ${ec2Count} EC2 + ${s3Count} S3 + ${lambdaCount} Lambda + ${dynamoDbCount} DynamoDB = ${resources.length} resource(s).`
+  );
+
+
+  return resources;
+}
+
+
+/*
+ * ---------------------------------------------------------
+ * 6. EC2 POWER & LIFECYCLE MANAGEMENT
+ * ---------------------------------------------------------
+ */
+
+export async function stopAwsEc2Instance(
+  instanceId: string,
+  regionOverride?: string
+) {
+
+  const config =
+    getAwsClientConfig(
+      regionOverride
+    );
+
+  const ec2Client =
+    new EC2Client(config);
+
+  console.log(
+    `[CloudWise-AI] Sending StopInstances command for ${instanceId} in ${config.region}...`
+  );
+
+  const response =
+    await ec2Client.send(
+      new StopInstancesCommand({
+        InstanceIds: [
+          instanceId
+        ]
+      })
+    );
+
+  const stateChange =
+    response
+      .StoppingInstances?.[0];
+
+  console.log(
+    `[CloudWise-AI] AWS EC2 ${instanceId} state: ${stateChange?.PreviousState?.Name} -> ${stateChange?.CurrentState?.Name}`
+  );
+
+  return {
+    success: true,
+    instanceId,
+    previousState:
+      stateChange
+        ?.PreviousState
+        ?.Name,
+    currentState:
+      stateChange
+        ?.CurrentState
+        ?.Name ||
+      'stopping'
+  };
+}
+
+
+export async function startAwsEc2Instance(
+  instanceId: string,
+  regionOverride?: string
+) {
+
+  const config =
+    getAwsClientConfig(
+      regionOverride
+    );
+
+  const ec2Client =
+    new EC2Client(config);
+
+  console.log(
+    `[CloudWise-AI] Sending StartInstances command for ${instanceId} in ${config.region}...`
+  );
+
+  const response =
+    await ec2Client.send(
+      new StartInstancesCommand({
+        InstanceIds: [
+          instanceId
+        ]
+      })
+    );
+
+  const stateChange =
+    response
+      .StartingInstances?.[0];
+
+  console.log(
+    `[CloudWise-AI] AWS EC2 ${instanceId} state: ${stateChange?.PreviousState?.Name} -> ${stateChange?.CurrentState?.Name}`
+  );
+
+  return {
+    success: true,
+    instanceId,
+    previousState:
+      stateChange
+        ?.PreviousState
+        ?.Name,
+    currentState:
+      stateChange
+        ?.CurrentState
+        ?.Name ||
+      'pending'
+  };
+}
+
+
+export async function terminateAwsEc2Instance(
+  instanceId: string,
+  regionOverride?: string
+) {
+
+  const config =
+    getAwsClientConfig(
+      regionOverride
+    );
+
+  const ec2Client =
+    new EC2Client(config);
+
+  console.log(
+    `[CloudWise-AI] Sending TerminateInstances command for ${instanceId} in ${config.region}...`
+  );
+
+  const response =
+    await ec2Client.send(
+      new TerminateInstancesCommand({
+        InstanceIds: [
+          instanceId
+        ]
+      })
+    );
+
+  const stateChange =
+    response
+      .TerminatingInstances?.[0];
+
+  return {
+    success: true,
+    instanceId,
+    previousState:
+      stateChange
+        ?.PreviousState
+        ?.Name,
+    currentState:
+      stateChange
+        ?.CurrentState
+        ?.Name ||
+      'shutting-down'
+  };
 }
 
 
@@ -323,16 +759,23 @@ export async function getNormalizedAwsResources(
 
 async function runTest() {
 
-  const connected =
+  const connection =
     await testAwsConnection();
 
-  if (!connected) {
+  if (!connection.connected) {
+
+    console.error(
+      connection.error
+    );
+
     return;
   }
 
+
   console.log(
-    "\nRetrieving and normalizing AWS resources...\n"
+    "\nRetrieving and normalizing AWS multi-service inventory...\n"
   );
+
 
   const resources =
     await getNormalizedAwsResources();
@@ -343,7 +786,7 @@ async function runTest() {
   ) {
 
     console.log(
-      "No EC2 instances found in ap-south-1."
+      "No supported AWS resources found."
     );
 
     return;
@@ -359,79 +802,16 @@ async function runTest() {
 }
 
 
-/*
- * ---------------------------------------------------------
- * 5. EC2 POWER & LIFECYCLE MANAGEMENT (STOP / START / TERMINATE)
- * ---------------------------------------------------------
- */
-
-export async function stopAwsEc2Instance(instanceId: string, regionOverride?: string) {
-  const config = getAwsClientConfig(regionOverride);
-  const ec2Client = new EC2Client(config);
-  console.log(`[CloudWise-AI] Sending StopInstances command for ${instanceId} in ${config.region}...`);
-  const response = await ec2Client.send(new StopInstancesCommand({
-    InstanceIds: [instanceId]
-  }));
-  const stateChange = response.StoppingInstances?.[0];
-  console.log(`[CloudWise-AI] AWS EC2 ${instanceId} state: ${stateChange?.PreviousState?.Name} -> ${stateChange?.CurrentState?.Name}`);
-  return {
-    success: true,
-    instanceId,
-    previousState: stateChange?.PreviousState?.Name,
-    currentState: stateChange?.CurrentState?.Name || 'stopping'
-  };
-}
-
-export async function startAwsEc2Instance(instanceId: string, regionOverride?: string) {
-  const config = getAwsClientConfig(regionOverride);
-  const ec2Client = new EC2Client(config);
-  console.log(`[CloudWise-AI] Sending StartInstances command for ${instanceId} in ${config.region}...`);
-  const response = await ec2Client.send(new StartInstancesCommand({
-    InstanceIds: [instanceId]
-  }));
-  const stateChange = response.StartingInstances?.[0];
-  console.log(`[CloudWise-AI] AWS EC2 ${instanceId} state: ${stateChange?.PreviousState?.Name} -> ${stateChange?.CurrentState?.Name}`);
-  return {
-    success: true,
-    instanceId,
-    previousState: stateChange?.PreviousState?.Name,
-    currentState: stateChange?.CurrentState?.Name || 'pending'
-  };
-}
-
-export async function terminateAwsEc2Instance(instanceId: string, regionOverride?: string) {
-  const config = getAwsClientConfig(regionOverride);
-  const ec2Client = new EC2Client(config);
-  console.log(`[CloudWise-AI] Sending TerminateInstances command for ${instanceId} in ${config.region}...`);
-  const response = await ec2Client.send(new TerminateInstancesCommand({
-    InstanceIds: [instanceId]
-  }));
-  const stateChange = response.TerminatingInstances?.[0];
-  return {
-    success: true,
-    instanceId,
-    previousState: stateChange?.PreviousState?.Name,
-    currentState: stateChange?.CurrentState?.Name || 'shutting-down'
-  };
-}
-
-/*
- * Run test only when this file
- * is directly executed.
-
- * Importing awsCollector.ts from
- * server.ts will NOT automatically
- * execute the test.
- */
-
 const executedFile =
   process.argv[1]
     ?.replace(/\\/g, "/");
+
 
 if (
   executedFile?.endsWith(
     "/awsCollector.ts"
   )
 ) {
+
   runTest();
 }

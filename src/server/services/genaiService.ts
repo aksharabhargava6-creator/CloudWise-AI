@@ -1,19 +1,13 @@
-
 import "dotenv/config";
 
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import {
+  GoogleGenAI,
+  ThinkingLevel
+} from "@google/genai";
 
-const apiKey = process.env.GEMINI_API_KEY;
-
-if (!apiKey) {
-  throw new Error("GEMINI_API_KEY is not configured");
-}
-
-const ai = new GoogleGenAI({
-  apiKey
-});
 
 const MODEL = "gemini-3.6-flash";
+
 
 export interface RecommendationExplanationInput {
   resource_id: string;
@@ -31,9 +25,41 @@ export interface RecommendationExplanationInput {
   status?: string;
 }
 
+
+function getGeminiClient(): GoogleGenAI {
+  const apiKey =
+    process.env.GEMINI_API_KEY?.trim();
+
+  if (!apiKey) {
+    throw new Error(
+      "Gemini AI explanation is not configured. Set GEMINI_API_KEY in .env to use this optional feature."
+    );
+  }
+
+  return new GoogleGenAI({
+    apiKey
+  });
+}
+
+
+export function isGeminiConfigured(): boolean {
+  return Boolean(
+    process.env.GEMINI_API_KEY?.trim()
+  );
+}
+
+
 export async function explainRecommendation(
   recommendation: RecommendationExplanationInput
 ): Promise<string> {
+
+  /*
+   * Gemini is initialized lazily here instead of when the
+   * server imports this file. This allows the rest of
+   * CloudWise (AWS, database, dashboard, etc.) to run even
+   * when GEMINI_API_KEY has not been configured.
+   */
+  const ai = getGeminiClient();
 
   const prompt = `
 You are the AI explanation assistant for CloudWise AI,
@@ -119,10 +145,12 @@ Explain the action associated with the existing recommendation.
 
   const maxAttempts = 3;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-
+  for (
+    let attempt = 1;
+    attempt <= maxAttempts;
+    attempt++
+  ) {
     try {
-
       console.log(
         `Calling Gemini (attempt ${attempt}/${maxAttempts})...`
       );
@@ -132,18 +160,21 @@ Explain the action associated with the existing recommendation.
           model: MODEL,
           contents: prompt,
           config: {
-  maxOutputTokens: 500,
-  temperature: 0.2,
-  thinkingConfig: {
-  thinkingLevel: ThinkingLevel.MINIMAL
-},
-  httpOptions: {
-    timeout: 30000
-  }
-}
+            maxOutputTokens: 500,
+            temperature: 0.2,
+            thinkingConfig: {
+              thinkingLevel:
+                ThinkingLevel.MINIMAL
+            },
+            httpOptions: {
+              timeout: 30000
+            }
+          }
         });
 
-      console.log("Gemini response received.");
+      console.log(
+        "Gemini response received."
+      );
 
       const text =
         response.text?.trim();
@@ -157,7 +188,6 @@ Explain the action associated with the existing recommendation.
       return text;
 
     } catch (error: any) {
-
       console.error(
         `Gemini attempt ${attempt} failed:`,
         error
@@ -167,15 +197,24 @@ Explain the action associated with the existing recommendation.
         throw error;
       }
 
-      const delay = 5000 * Math.pow(2, attempt - 1);
+      const delay =
+        5000 *
+        Math.pow(
+          2,
+          attempt - 1
+        );
 
-console.log(
-  `Retrying Gemini request in ${delay / 1000} seconds...`
-);
+      console.log(
+        `Retrying Gemini request in ${delay / 1000} seconds...`
+      );
 
-await new Promise(
-  resolve => setTimeout(resolve, delay)
-);
+      await new Promise(
+        resolve =>
+          setTimeout(
+            resolve,
+            delay
+          )
+      );
     }
   }
 
