@@ -1,0 +1,34 @@
+services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudwise-backend
+    ports:
+      - "8000:8000"
+    environment:
+      ODBC_CONNECTION: "Driver={ODBC Driver 18 for SQL Server};Server=host.docker.internal,1433;Database=cloudwise;UID=cloudwise_docker;PWD=${DB_PASSWORD};TrustServerCertificate=yes"
+      CORS_ORIGINS: "http://localhost:3000"
+      SEED_DATA: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cloudwise-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      DB_API_URL: "http://backend:8000"
+    depends_on:
+      backend:
+        condition: service_healthy
