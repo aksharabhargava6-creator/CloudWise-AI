@@ -1,0 +1,25 @@
+name: CloudWise CI
+
+on:
+  push:
+    branches:
+      - main
+      - devops
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t cloudwise-backend ./backend
+
+      - name: Build frontend image
+        run: docker build -t cloudwise-frontend .
