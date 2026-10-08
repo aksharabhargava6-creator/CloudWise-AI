@@ -15,6 +15,30 @@ export interface CloudResource {
   anomaly_type?: string;
   instance_type?: string;
   created_at?: string;
+
+  // Optional live-provider metadata.
+  metadata?: {
+    private_ip?: string | null;
+    public_ip?: string | null;
+    native_resource_type?: string;
+
+    creation_date?: string | null;
+
+    versioning?:
+      | 'Enabled'
+      | 'Suspended'
+      | 'Disabled';
+
+    encrypted?: boolean;
+
+    encryption_algorithm?: string | null;
+
+    public_access_blocked?: boolean;
+
+    tags?: Record<string, string>;
+
+    [key: string]: unknown;
+  };
 }
 
 export interface Anomaly {
