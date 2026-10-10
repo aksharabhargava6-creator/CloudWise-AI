@@ -125,7 +125,13 @@ jobs:
 
   push-images:
     name: Push Docker Images to GHCR
+    needs:
+      - secret-scan
+      - dependency-scan
+      - docker-build
+      - container-scan
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
 
     permissions:
       contents: read
