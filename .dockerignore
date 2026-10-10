@@ -10,3 +10,9 @@ dist
 backend/.venv
 backend/__pycache__
 backend/*.pyc
+# Exclude backend files from the frontend image
+backend/
+
+# Exclude generated Trivy reports and image archives
+trivy-frontend.json
+frontend-image.tar
